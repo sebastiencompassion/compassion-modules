@@ -1,12 +1,13 @@
 ##############################################################################
 #
-#    Copyright (C) 2016 Compassion CH (http://www.compassion.ch)
+#    Copyright (C) 2016-2022 Compassion CH (http://www.compassion.ch)
 #    Releasing children from poverty in Jesus' name
 #    @author: Emanuel Cino <ecino@compassion.ch>
 #
 #    The licence is in the file __manifest__.py
 #
 ##############################################################################
+import base64
 import logging
 import threading
 from collections import defaultdict
@@ -14,28 +15,24 @@ from html.parser import HTMLParser
 from io import BytesIO
 
 from jinja2 import TemplateSyntaxError
-from reportlab.lib.colors import white
-from reportlab.lib.units import mm
-from reportlab.pdfgen.canvas import Canvas
 
-from odoo import api, models, fields, _, tools
-from odoo.exceptions import UserError, QWebException
+from odoo import _, api, fields, models, tools
+from odoo.exceptions import MissingError, QWebException, UserError
 
-logger = logging.getLogger(__name__)
+_logger = logging.getLogger(__name__)
 testing = tools.config.get("test_enable")
 
 try:
-    from PyPDF2 import PdfFileWriter, PdfFileReader
+    from PyPDF2 import PdfFileReader
     from PyPDF2.utils import PdfReadError
 except ImportError:
-    logger.warning(
-        "Please install PyPDF2 for generating OMR codes in "
-        "Printed partner communications"
+    _logger.warning(
+        "Please install PyPDF2 for generating print versions of communications."
     )
 
 
 class MLStripper(HTMLParser):
-    """ Used to remove HTML tags. """
+    """Used to remove HTML tags."""
 
     def __init__(self):
         super().__init__()
@@ -56,28 +53,27 @@ def strip_tags(html):
 
 
 class CommunicationJob(models.Model):
-    """ Communication Jobs are task that will either generate and send
-     an e-mail or print a document when executed.
+    """Communication Jobs are task that will either generate and send
+    an e-mail or print a document when executed.
 
-     It is useful to keep a history of the communication sent to partners
-     and to send again (or print again) a particular communication.
+    It is useful to keep a history of the communication sent to partners
+    and to send again (or print again) a particular communication.
 
-     It is also useful to batch send communications without manually looking
-     for which one to send by e-mail and which one to print.
-     """
+    It is also useful to batch send communications without manually looking
+    for which one to send by e-mail and which one to print.
+    """
 
     _name = "partner.communication.job"
     _description = "Communication Job"
     _rec_name = "subject"
     _order = "date desc,sent_date desc"
+    _check_company_auto = True
     _inherit = [
         "partner.communication.defaults",
         "mail.activity.mixin",
         "mail.thread",
-        "partner.communication.orm.config.abstract",
         "phone.validation.mixin",
     ]
-    _phone_name_fields = ["partner_phone", "partner_mobile"]
 
     ##########################################################################
     #                                 FIELDS                                 #
@@ -88,17 +84,21 @@ class CommunicationJob(models.Model):
         required=True,
         default=lambda s: s.env.ref("partner_communication.default_communication"),
         readonly=False,
-        index=True
+        index=True,
     )
     model = fields.Char(related="config_id.model", store=True, index=True)
     partner_id = fields.Many2one(
-        "res.partner", "Send to", required=True, ondelete="cascade", readonly=False,
-        index=True
+        "res.partner",
+        "Send to",
+        required=True,
+        ondelete="cascade",
+        readonly=False,
+        index=True,
+        check_company=True,
     )
     company_id = fields.Many2one(
-        "res.company", related="partner_id.company_id", store=True, index=True)
-    partner_phone = fields.Char(related="partner_id.phone")
-    partner_mobile = fields.Char(related="partner_id.mobile")
+        "res.company", compute="_compute_company", store=True, index=True
+    )
     country_id = fields.Many2one(related="partner_id.country_id", readonly=False)
     parent_id = fields.Many2one(related="partner_id.parent_id", readonly=False)
     object_ids = fields.Char("Resource ids", required=True)
@@ -109,11 +109,12 @@ class CommunicationJob(models.Model):
             ("pending", _("Pending")),
             ("done", _("Done")),
             ("cancel", _("Cancelled")),
-            ("failure", _("Failure"))
+            ("failure", _("Failure")),
         ],
         default="pending",
         tracking=True,
         copy=False,
+        index=True,
     )
     need_call = fields.Selection(
         [
@@ -129,13 +130,11 @@ class CommunicationJob(models.Model):
     email_template_id = fields.Many2one(
         related="config_id.email_template_id", store=True, readonly=False
     )
-    email_to = fields.Char(help="optional e-mail address to override recipient")
     email_id = fields.Many2one(
         "mail.mail", "Generated e-mail", readonly=True, index=True, copy=False
     )
-    phonecall_id = fields.Many2one("crm.phonecall", "Phonecall log", readonly=True)
     body_html = fields.Html(sanitize=False)
-    pdf_page_count = fields.Integer(string="PDF size", readonly=True)
+    pdf_page_count = fields.Integer("Page count", readonly=True)
     subject = fields.Char()
     attachment_ids = fields.One2many(
         "partner.communication.attachment",
@@ -151,16 +150,14 @@ class CommunicationJob(models.Model):
         domain=[("report_id", "!=", False)],
         readonly=False,
     )
-    ir_attachment_tmp = fields.Many2many(
-        "ir.attachment",
-        string="Attachments_tmp",
-        compute="_compute_void",
-        inverse="_inverse_ir_attachment_tmp",
-        readonly=False,
+    printed_pdf_data = fields.Binary(
+        help="Technical field used when the report was not sent to printer "
+        "but to client in order to download the result afterwards."
     )
+    printed_pdf_name = fields.Char(compute="_compute_print_pdfname")
 
-    printer_output_tray_id = fields.Many2one("printing.tray.output",
-                                             "Printer Output Bin")
+    # printer_output_tray_id = fields.Many2one("printing.tray.output",
+    #                                          "Printer Output Bin")
 
     def _compute_ir_attachments(self):
         for job in self:
@@ -177,11 +174,15 @@ class CommunicationJob(models.Model):
                         report = record.report_id.with_context(
                             lang=record.partner_id.lang, must_skip_send_to_printer=True
                         )
-                        pdf_str = report.sudo().render_qweb_pdf(record.ids)
+                        pdf_str = report.sudo()._render_qweb_pdf(record.ids)
                         pdf = PdfFileReader(BytesIO(pdf_str[0]))
                         record.pdf_page_count = pdf.getNumPages()
-                    except (UserError, PdfReadError, QWebException,
-                            TemplateSyntaxError):
+                    except (
+                        UserError,
+                        PdfReadError,
+                        QWebException,
+                        TemplateSyntaxError,
+                    ):
                         self.env.clear()
                         record.pdf_page_count = 0
 
@@ -191,7 +192,7 @@ class CommunicationJob(models.Model):
             for attachment in job.ir_attachment_ids:
                 if attachment not in job.attachment_ids.mapped("attachment_id"):
                     if not attachment.report_id and not self.env.context.get(
-                            "no_print"
+                        "no_print"
                     ):
                         raise UserError(
                             _(
@@ -209,19 +210,40 @@ class CommunicationJob(models.Model):
                     )
             # Remove deleted attachments
             job.attachment_ids.filtered(
-                lambda a: a.attachment_id not in job.ir_attachment_ids
+                lambda a, job=job: a.attachment_id not in job.ir_attachment_ids
             ).unlink()
 
-    def _compute_void(self):
-        pass
-
-    def _inverse_ir_attachment_tmp(self):
+    @api.depends("partner_id", "object_ids")
+    def _compute_company(self):
+        """
+        Rule for setting company:
+            1. Check the related records and use the company set in those
+            2. Check for a company linked to the partner
+            3. Look if a company exists at the country of the partner
+            4. Call a fallback function that can provide a custom rule for finding a
+               company
+        """
         for job in self:
-            for attachment in job.ir_attachment_tmp:
-                attachment.report_id = self.env.ref(
-                    "partner_communication.report_a4_no_margin"
+            company = job.partner_id.company_id
+            first_object = job.object_ids and job.get_objects()[:1]
+            if (
+                first_object
+                and hasattr(first_object, "company_id")
+                and first_object.company_id
+            ):
+                company = first_object.company_id
+            if not company and job.partner_id.country_id:
+                company = self.env["res.company"].search(
+                    [("partner_id.country_id", "=", job.partner_id.country_id.id)],
+                    limit=1,
                 )
-            job.ir_attachment_ids += job.ir_attachment_tmp
+            if not company:
+                company = self._fallback_company()
+            job.company_id = company
+
+    def _fallback_company(self):
+        # Used when company couldn't be found with the partner
+        return self.env.company
 
     @api.model
     def send_mode_select(self):
@@ -231,12 +253,18 @@ class CommunicationJob(models.Model):
             ("both", _("Both")),
         ]
 
+    def _compute_print_pdfname(self):
+        for job in self:
+            job.printed_pdf_name = (
+                fields.Datetime.to_string(job.sent_date) + "-" + job.subject + ".pdf"
+            )
+
     ##########################################################################
     #                              ORM METHODS                               #
     ##########################################################################
     @api.model
     def create(self, vals):
-        """ If a pending communication for same partner exists,
+        """If a pending communication for same partner exists,
         add the object_ids to it. Otherwise, create a new communication.
         opt-out partners won't create any communication.
         """
@@ -253,12 +281,16 @@ class CommunicationJob(models.Model):
         same_job_search = [
             ("partner_id", "=", vals.get("partner_id")),
             ("config_id", "=", vals.get("config_id")),
-            ("config_id", "!=", self.env.ref(
-                "partner_communication.default_communication").id),
+            (
+                "config_id",
+                "!=",
+                self.env.ref("partner_communication.default_communication").id,
+            ),
             ("state", "in", ["pending", "failure"]),
         ] + self.env.context.get("same_job_search", [])
         job = self.search(same_job_search, limit=1)
-        if job:
+
+        if job and not job.config_id.forbid_merging:
             job.object_ids = job.object_ids + "," + vals["object_ids"]
             job.refresh_text()
             if job.auto_send:
@@ -273,7 +305,11 @@ class CommunicationJob(models.Model):
 
         if "send_mode" not in vals and "default_send_mode" not in self.env.context:
             job.send_mode = send_mode[0]
-        if "auto_send" not in vals and "default_auto_send" not in self.env.context:
+        if (
+            "auto_send" not in vals
+            and "default_auto_send" not in self.env.context
+            and send_mode[1]
+        ):
             job.auto_send = send_mode[1]
 
         if not job.body_html or not strip_tags(job.body_html):
@@ -291,16 +327,17 @@ class CommunicationJob(models.Model):
                 # So we remove it and an employee must set it manually afterwards
                 job.send_mode = ""
 
+        if job.need_call == "before_sending":
+            job.schedule_call()
         if job.auto_send:
             job.send()
         return job
-
 
     def copy(self, vals=None):
         if vals is None:
             vals = {}
         vals["auto_send"] = False
-        return super(CommunicationJob, self).copy(vals)
+        return super().copy(vals)
 
     @api.model
     def _get_default_vals(self, vals, default_vals=None):
@@ -318,13 +355,7 @@ class CommunicationJob(models.Model):
             [
                 "report_id",
                 "need_call",
-                "omr_enable_marks",
-                "omr_should_close_envelope",
-                "omr_add_attachment_tray_1",
-                "omr_add_attachment_tray_2",
-                "omr_top_mark_x",
-                "omr_top_mark_y",
-                "omr_single_sided",
+                "print_if_not_email",
             ]
         )
 
@@ -337,32 +368,31 @@ class CommunicationJob(models.Model):
         )
 
         # Determine user by default : take in config or employee
-        omr_config, printer_config = config.get_config_for_lang(lang_of_partner)
+        default_config = config.get_default_config(lang_of_partner)
         if not vals.get("user_id"):
-            # responsible for the communication is user specified in the omr_config
+            # responsible for the communication is user specified in the print_config
             # or user specified in the config itself
             # or the current user
             user_id = self.env.uid
-            if omr_config.user_id:
-                user_id = omr_config.user_id.id
+            if default_config.user_id:
+                user_id = default_config.user_id.id
             elif config.user_id:
                 user_id = config.user_id.id
             vals["user_id"] = user_id
 
-        if not vals.get("printer_output_tray_id"):
-            if printer_config.printer_output_tray_id:
-                vals["printer_output_tray_id"] = \
-                    printer_config.printer_output_tray_id.id
+        # if not vals.get("printer_output_tray_id"):
+        #     if printer_config.printer_output_tray_id:
+        #         vals["printer_output_tray_id"] = \
+        #             printer_config.printer_output_tray_id.id
 
         # Check all default_vals fields
         for default_val in default_vals:
             if default_val not in vals:
-                if default_val.startswith("omr_"):
-                    value = getattr(omr_config, default_val, False)
-                else:
-                    value = getattr(config, default_val)
-                    if default_val.endswith("_id"):
-                        value = value.id
+                value = getattr(default_config, default_val, False) or getattr(
+                    config, default_val, False
+                )
+                if default_val.endswith("_id"):
+                    value = value.id
                 vals[default_val] = value
 
         return config
@@ -381,7 +411,6 @@ class CommunicationJob(models.Model):
 
         if "need_call" in vals or "state" in vals:
             for job in self:
-
                 # if the call must be done after the sending, we unlink all activities
                 # associated with the job (as for the moment, there is only one activity
                 # type)
@@ -391,9 +420,9 @@ class CommunicationJob(models.Model):
                 # if the call must be done before the sending, and if there isn't an
                 # activity already scheduled, we schedule a new activity
                 # (there's only one activity type associated with the communication job)
-                if ((job.need_call == "before_sending"
-                     and job.state == "pending")
-                        and not job.activity_ids):
+                if (
+                    job.need_call == "before_sending" and job.state == "pending"
+                ) and not job.activity_ids:
                     job.with_user(job.user_id.id).schedule_call()
 
         return True
@@ -402,10 +431,11 @@ class CommunicationJob(models.Model):
     #                             PUBLIC METHODS                             #
     ##########################################################################
     def send(self):
-        """ Executes the job. """
+        """Executes the job."""
         todo = self.filtered(
-            lambda j: j.state == "pending" and not (
-                j.need_call == "before_sending" and j.activity_ids))
+            lambda j: j.state == "pending"
+            and not (j.need_call == "before_sending" and j.activity_ids)
+        )
         to_print = todo.filtered(lambda j: j.send_mode == "physical")
         for job in todo.filtered(lambda j: j.send_mode in ("both", "digital")):
             origin = self.env.context.get("origin")
@@ -432,17 +462,17 @@ class CommunicationJob(models.Model):
                 job.with_user(job.user_id.id).schedule_call()
         if to_print:
             return to_print._print_report()
-        return True
+        return self.download_data()
 
     def schedule_call(self):
         self.ensure_one()
         self.activity_schedule(
-            'mail.mail_activity_data_call',
+            "mail.mail_activity_data_call",
             summary="Call " + self.partner_id.name,
-            user_id=self.env.uid,
+            user_id=self.user_id.id,
             note=f"Call {self.partner_id.name} at (phone) "
-                 f"{self.partner_phone or self.partner_mobile} regarding "
-                 f"the communication."
+            f"{self.partner_id.phone or self.partner_id.mobile} regarding "
+            f"the communication.",
         )
 
     def cancel(self):
@@ -450,41 +480,52 @@ class CommunicationJob(models.Model):
         return self.write({"state": "cancel"})
 
     def reset(self):
+        self.mapped("attachment_ids").write({"printed_pdf_data": False})
         self.write(
-            {"state": "pending", "sent_date": False, "email_id": False, }
+            {
+                "state": "pending",
+                "sent_date": False,
+                "email_id": False,
+                "printed_pdf_data": False,
+            }
         )
         return True
 
-    def refresh_text(self, refresh_uid=False):
+    def refresh_text(self):
         self.mapped("attachment_ids").unlink()
         failed = self.set_attachments()
         for job in self - failed:
             lang = self.env.context.get("lang_preview", job.partner_id.lang)
             if job.email_template_id and job.object_ids:
                 try:
-                    fields = (
-                        self.env["mail.compose.message"]
-                            .with_context(lang=lang)
-                            .get_generated_fields(job.email_template_id, [job.id])
+                    fields = job.email_template_id.with_context(
+                        template_preview_lang=lang
+                    ).generate_email(job.ids, ["body_html", "subject"])
+                    job.write(
+                        {
+                            "body_html": fields[job.id]["body_html"],
+                            "subject": fields[job.id]["subject"],
+                            "state": job.state if job.state != "failure" else "pending",
+                        }
                     )
-                    assert fields["body_html"] and fields["subject"]
-                    job.write({
-                        "body_html": fields["body_html"],
-                        "subject": fields["subject"],
-                        "state": job.state if job.state != "failure" else "pending"
-                    })
-                except (UserError, QWebException, TemplateSyntaxError, AssertionError):
-                    logger.error("Failed to generate communication", exc_info=True)
+                except (
+                    MissingError,
+                    UserError,
+                    QWebException,
+                    TemplateSyntaxError,
+                ) as e:
+                    _logger.error(
+                        f"Failed to generate communication {str(e)}",
+                        exc_info=True,
+                    )
                     job.env.clear()
                     if job.state == "pending":
-                        job.write({
-                            "state": "failure",
-                            "body_html": "Error in template"
-                        })
-                finally:
-                    if refresh_uid:
-                        job.user_id = self.env.user
-
+                        job.write(
+                            {
+                                "state": "failure",
+                                "body_html": f"{str(type(e))} {str(e)}",
+                            }
+                        )
         return True
 
     def quick_refresh(self):
@@ -494,18 +535,14 @@ class CommunicationJob(models.Model):
         template = jobs.mapped("email_template_id")
         if len(template) > 1:
             raise UserError(_("This is only possible for one template at time"))
-        values = (
-            self.env["mail.compose.message"]
-                .with_context(lang=lang)
-                .get_generated_fields(template, jobs.ids)
+        values = template.with_context(template_preview_lang=lang).generate_email(
+            jobs.ids, ["body_html", "subject"]
         )
-        if not isinstance(values, list):
-            values = [values]
-        for index in range(0, len(values)):
-            jobs[index].write(
+        for job, vals in zip(jobs, values.values()):
+            job.write(
                 {
-                    "body_html": values[index]["body_html"],
-                    "subject": values[index]["subject"],
+                    "body_html": vals["body_html"],
+                    "subject": vals["subject"],
                 }
             )
         return True
@@ -531,7 +568,6 @@ class CommunicationJob(models.Model):
         action = {
             "name": _("Related objects"),
             "type": "ir.actions.act_window",
-            "view_type": "form",
             "view_mode": "form,tree",
             "res_model": self.config_id.model,
             "context": self.with_context(group_by=False).env.context,
@@ -545,32 +581,6 @@ class CommunicationJob(models.Model):
             action["res_id"] = object_ids[0]
 
         return action
-
-    def log_call(self):
-        return {
-            "name": _("Log your call"),
-            "type": "ir.actions.act_window",
-            "view_type": "form",
-            "view_mode": "form",
-            "res_model": "partner.communication.call.wizard",
-            "context": self.with_context(
-                {
-                    "click2dial_id": self.id,
-                    "phone_number": self.partner_phone or self.partner_mobile,
-                    "timestamp": fields.Datetime.now(),
-                    "default_communication_id": self.id,
-                }
-            ).env.context,
-            "target": "new",
-        }
-
-    def call(self):
-        """ Call partner from tree view button. """
-        self.ensure_one()
-        self.env["phone.common"].with_context(
-            click2dial_model=self._name, click2dial_id=self.id
-        ).click2dial(self.partner_phone or self.partner_mobile)
-        return self.log_call()
 
     def get_objects(self):
         model = list(set(self.mapped("config_id.model")))
@@ -606,14 +616,16 @@ class CommunicationJob(models.Model):
                                     "data": data[1],
                                 }
                             )
-                except:
-                    logger.error("Error during attachment creation", exc_info=True)
+                except Exception:
+                    _logger.error("Error during attachment creation", exc_info=True)
                     job.env.clear()
                     if job.state == "pending":
-                        job.write({
-                            "state": "failure",
-                            "body_html": "Error in attachments creation."
-                        })
+                        job.write(
+                            {
+                                "state": "failure",
+                                "body_html": "Error in attachments creation.",
+                            }
+                        )
                     failed += job
         return failed
 
@@ -623,7 +635,6 @@ class CommunicationJob(models.Model):
         return {
             "name": _("Preview"),
             "type": "ir.actions.act_window",
-            "view_type": "form",
             "view_mode": "form",
             "res_model": preview_model,
             "res_id": preview.id,
@@ -631,106 +642,38 @@ class CommunicationJob(models.Model):
             "target": "new",
         }
 
-    def add_omr_marks(self, pdf_data, is_latest_document):
-        # Documentation
-        # http://meteorite.unm.edu/site_media/pdf/reportlab-userguide.pdf
-        # https://pythonhosted.org/PyPDF2/PdfFileReader.html
-        # https://stackoverflow.com/a/17538003
-        # https://gist.github.com/kzim44/5023021
-        # https://www.blog.pythonlibrary.org/2013/07/16/
-        #   pypdf-how-to-write-a-pdf-to-memory/
-        self.ensure_one()
+    def download_data(self):
+        action = {
+            "type": "ir.actions.act_window",
+            "view_mode": "tree,form",
+            "res_model": self._name,
+            "domain": [("id", "in", self.ids)],
+            "name": _("Send result"),
+        }
+        to_download = self.filtered("printed_pdf_data")
+        if to_download:
+            # Redirect user for fetching the printed data
+            res_wizard = self.env[
+                "partner.communication.download.print.job.wizard"
+            ].create({"communication_job_ids": [(6, 0, to_download.ids)]})
+            action.update(
+                {
+                    "view_mode": "form",
+                    "res_model": "partner.communication.download.print.job.wizard",
+                    "res_id": res_wizard.id,
+                    "target": "new",
+                    "domain": [],
+                }
+            )
+        return action
 
-        pdf_buffer = BytesIO()
-        pdf_buffer.write(pdf_data)
-
-        existing_pdf = PdfFileReader(pdf_buffer)
-        output = PdfFileWriter()
-        total_pages = existing_pdf.getNumPages()
-
-        def lastpair(a):
-            b = a - 1
-            if self.omr_single_sided or b % 2 == 0:
-                return b
-            return lastpair(b)
-
-        # print latest omr mark on latest pair page (recto)
-        latest_omr_page = lastpair(total_pages)
-
-        for page_number in range(total_pages):
-            page = existing_pdf.getPage(page_number)
-            # only print omr marks on pair pages (recto)
-            if self.omr_single_sided or page_number % 2 == 0:
-                is_latest_page = is_latest_document and page_number == latest_omr_page
-                marks = self._compute_marks(is_latest_page)
-                omr_layer = self._build_omr_layer(marks)
-                page.mergePage(omr_layer)
-            output.addPage(page)
-
-        out_buffer = BytesIO()
-        output.write(out_buffer)
-
-        return out_buffer.getvalue()
-
-    def _compute_marks(self, is_latest_page):
-        marks = [
-            True,  # Start mark (compulsory)
-            is_latest_page,
-            is_latest_page and self.omr_add_attachment_tray_1,
-            is_latest_page and self.omr_add_attachment_tray_2,
-            is_latest_page and not self.omr_should_close_envelope,
-        ]
-        parity_check = sum(marks) % 2 == 0
-        marks.append(parity_check)
-        marks.append(True)  # End mark (compulsory)
-        return marks
-
-    def _build_omr_layer(self, marks):
-        self.ensure_one()
-        padding_x = 4.2 * mm
-        padding_y = 8.5 * mm
-        top_mark_x = self.omr_top_mark_x * mm
-        top_mark_y = self.omr_top_mark_y * mm
-        mark_y_spacing = 4 * mm
-
-        mark_width = 6.5 * mm
-        marks_height = (len(marks) - 1) * mark_y_spacing
-
-        logger.debug(
-            "Mailer DS-75i OMR Settings: 1=%s 2=%s",
-            str((297 * mm - top_mark_y) / mm),
-            str((top_mark_x + mark_width / 2) / mm + 0.5),
+    @api.model
+    def get_snippet(self, snippet_name):
+        return (
+            self.env["communication.snippet"]
+            .search([("name", "=", snippet_name)])
+            .snippet_text
         )
-
-        omr_buffer = BytesIO()
-        omr_canvas = Canvas(omr_buffer)
-        omr_canvas.setLineWidth(0.2 * mm)
-
-        # add a white background for the omr code
-        omr_canvas.setFillColor(white)
-        omr_canvas.rect(
-            x=top_mark_x - padding_x,
-            y=top_mark_y - marks_height - padding_y,
-            width=mark_width + 2 * padding_x,
-            height=marks_height + 2 * padding_y,
-            fill=True,
-            stroke=False,
-        )
-
-        for offset, mark in enumerate(marks):
-            mark_y = top_mark_y - offset * mark_y_spacing
-            if mark:
-                omr_canvas.line(top_mark_x, mark_y, top_mark_x + mark_width, mark_y)
-
-        # Close the PDF object cleanly.
-        omr_canvas.showPage()
-        omr_canvas.save()
-
-        # move to the beginning of the BytesIO buffer
-        omr_buffer.seek(0)
-        omr_pdf = PdfFileReader(omr_buffer)
-
-        return omr_pdf.getPage(0)
 
     ##########################################################################
     #                             PRIVATE METHODS                            #
@@ -753,26 +696,26 @@ class CommunicationJob(models.Model):
                 "subject": self.subject,
                 "attachment_ids": [(6, 0, self.ir_attachment_ids.ids)],
                 "auto_delete": False,
-                "reply_to": (self.email_template_id.reply_to or self.user_id.email),
             }
-            if self.email_to:
-                # Replace partner e-mail by specified address
-                email_vals["email_to"] = self.email_to
-                del email_vals["recipient_ids"]
             if "default_email_vals" in self.env.context:
                 email_vals.update(self.env.context["default_email_vals"])
 
-            email = self.env["mail.compose.message"] \
-                .with_context(lang=partner.lang) \
+            email = (
+                self.env["mail.compose.message"]
+                .with_context(lang=partner.lang)
                 .create_emails(self.email_template_id, [self.id], email_vals)
+            )
             self.email_id = email
 
             try:
                 with self.env.cr.savepoint():
                     email.send()
-            except:
-                logger.error("Error while sending communication by email to %s ",
-                             partner.email, exc_info=True)
+            except Exception:
+                _logger.error(
+                    "Error while sending communication by email to %s ",
+                    partner.email,
+                    exc_info=True,
+                )
                 return "failure"
 
             # Subscribe author to thread, so that the reply
@@ -782,7 +725,7 @@ class CommunicationJob(models.Model):
         return "done"
 
     def _print_report(self):
-        name = self.env.user.firstname or self.env.user.name
+        name = self.env.user.name
         origin = self.env.context.get("origin")
         state = "done"
         if origin == "both_print":
@@ -795,30 +738,33 @@ class CommunicationJob(models.Model):
         }
         for job in self:
             if job.attachment_ids:
-                # Print letter
-                print_name = name[:3] + " " + (job.subject or "")
-                output_tray = job.print_letter(print_name)["output_tray"]
+                try:
+                    with self.env.cr.savepoint():
+                        # Print letter
+                        print_name = name[:3] + " " + (job.subject or "")
+                        # output_tray = job.print_letter(print_name)["output_tray"]
+                        job.print_letter(print_name)
 
-                # Print attachments in the same output_tray
-                job.attachment_ids.print_attachments(
-                    output_tray=output_tray,
-                )
-                job.write({"state": state, "sent_date": fields.Datetime.now()})
-                if not testing:
-                    # Commit to avoid invalid state if process fails
-                    self.env.cr.commit()  # pylint: disable=invalid-commit
+                        # Print attachments in the same output_tray
+                        job.attachment_ids.print_attachments(
+                            # output_tray=output_tray,
+                        )
+                        job.write({"state": state, "sent_date": fields.Datetime.now()})
+                except Exception:
+                    _logger.error("Error printing job %s", [job.id])
             else:
                 batch_print[job.partner_id.lang][job.config_id.name] += job
 
-        for lang, configs in batch_print.items():
+        for configs in batch_print.values():
             for config, jobs in configs.items():
-                print_name = name[:3] + " " + config
-                jobs.print_letter(print_name)
-                jobs.write({"state": state, "sent_date": fields.Datetime.now()})
-                if not testing:
-                    # Commit to avoid invalid state if process fails
-                    self.env.cr.commit()  # pylint: disable=invalid-commit
-        return True
+                try:
+                    with self.env.cr.savepoint():
+                        print_name = name[:3] + " " + config
+                        jobs.print_letter(print_name)
+                        jobs.write({"state": state, "sent_date": fields.Datetime.now()})
+                except Exception:
+                    _logger.error("Error while printing jobs %s", [str(jobs.ids)])
+        return self.download_data()
 
     def print_letter(self, print_name, **print_options):
         """
@@ -839,48 +785,47 @@ class CommunicationJob(models.Model):
             print_name=print_name, lang=lang, must_skip_send_to_printer=True
         )
         # Get communication config of language
-        config_lang = self.mapped("config_id.printer_config_ids").filtered(
+        config_lang = self.mapped("config_id.default_config_ids").filtered(
             lambda c: c.lang_id.code == lang
         )
 
         if len(report) > 1 or len(config_lang) > 1:
-            raise UserError(_("Cannot print multiple communication types at the same time."))
+            raise UserError(
+                _("Cannot print multiple communication types at the same time.")
+            )
 
         behaviour = report.behaviour()
 
         print_options["doc_format"] = report.report_type
         print_options["action"] = behaviour["action"]
 
-        # The get the print options in the following order of priority:
-        # - partner.communication.job (only for output bin)
-        # - partner.communication.config
-        # - ir.actions.report (behaviour: which can be specific for the user currently logged in)
-        def get_first(source):
-            return next((v for v in source if v), False)
+        # TODO Migrate this code when printing.tray functionalities are migrated to 14.0
+        # # The get the print options in the following order of priority:
+        # # - partner.communication.job (only for output bin)
+        # # - partner.communication.config
+        # # - ir.actions.report (behaviour: which can be specific for the user
+        # currently logged in)
+        # def get_first(source):
+        #     return next((v for v in source if v), False)
+        #
+        # print_options["output_tray"] = get_first((
+        #     self[:1].printer_output_tray_id.system_name,
+        #     config_lang.printer_output_tray_id.system_name,
+        #     behaviour["output_tray"]
+        # ))
+        # print_options["input_tray"] = get_first((
+        #     config_lang.printer_input_tray_id.system_name,
+        #     behaviour["input_tray"]
+        # ))
 
-        print_options["output_tray"] = get_first((
-            self[:1].printer_output_tray_id.system_name,
-            config_lang.printer_output_tray_id.system_name,
-            behaviour["output_tray"]
-        ))
-        print_options["input_tray"] = get_first((
-            config_lang.printer_input_tray_id.system_name,
-            behaviour["input_tray"]
-        ))
-
+        to_print = report._render_qweb_pdf(self.ids)
         printer = behaviour["printer"].with_context(lang=lang)
         if behaviour["action"] == "server" and printer:
             # Get pdf should directly send it to the printer
-            to_print = report.render_qweb_pdf(self.ids)
             printer.print_document(report.report_name, to_print[0], **print_options)
+        else:
+            # Store result in one communication
+            # (for later download from the result wizard)
+            self[:1].printed_pdf_data = base64.b64encode(to_print[0])
 
         return print_options
-
-    @api.model
-    def _needaction_domain_get(self):
-        """
-        Used to display a count icon in the menu
-        :return: domain of jobs counted
-        """
-
-        return [("state", "=", "pending")]

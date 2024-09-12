@@ -8,7 +8,7 @@
 #
 ##############################################################################
 
-from odoo import api, models, fields
+from odoo import api, fields, models
 
 
 class QueryFilter(models.TransientModel):
@@ -26,12 +26,6 @@ class QueryFilter(models.TransientModel):
     start_date = fields.Date()
     end_date = fields.Date()
     value = fields.Char(help="Separate values with ;")
-    mapped_fields = fields.Many2many(
-        "ir.model.fields",
-        "search_filter_to_fields",
-        compute="_compute_mapped_fields",
-        readonly=False,
-    )
 
     @api.onchange("start_date", "end_date")
     def onchange_dates(self):
@@ -41,29 +35,6 @@ class QueryFilter(models.TransientModel):
                 value += ";" + self.end_date
             self.value = value
 
-    @api.depends("model")
-    def _compute_mapped_fields(self):
-        mapping_name = self.env.context.get("default_mapping_name", "default")
-        for query in self.filtered("model"):
-            try:
-                mapping = self.env["compassion_mapping"].search(
-                    ["name", "=", mapping_name]
-                )
-                query.mapped_fields = self.env["ir.model.fields"].search(
-                    [
-                        ("model", "=", query.model),
-                        ("name", "in", [n for n in mapping.json_spec_ids.field_name]),
-                    ]
-                )
-            except ValueError:
-                continue
-
-    @api.onchange("mapped_fields")
-    def onchange_mapped_fields(self):
-        if self.mapped_fields:
-            return {"domain": {"field_id": [("id", "in", self.mapped_fields.ids)]}}
-
-    
     def data_to_json(self, mapping_name=None):
         # Queries should always be lists
         result = []
@@ -76,7 +47,7 @@ class QueryFilter(models.TransientModel):
 
 
 class QueryOperator(models.Model):
-    """ An operator, valid for certain field types. """
+    """An operator, valid for certain field types."""
 
     _name = "compassion.query.operator"
     _description = "Compassion Query Operator"

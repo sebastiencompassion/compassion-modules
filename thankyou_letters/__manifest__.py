@@ -32,14 +32,17 @@
     "category": "Other",
     "author": "Compassion CH",
     "license": "AGPL-3",
-    "website": "http://www.compassion.ch",
+    "website": "https://github.com/CompassionCH/compassion-modules",
     "depends": [
-        "partner_communication",  # compassion-modules
-        "advanced_translation",  # compassion-modules
-        "web_widget_digitized_signature",  # oca_addons/web
-        "account",  # source/addons
+        "partner_communication",
+        "partner_salutation",
+        "account",
     ],
-    "external_dependencies": {"python": ["babel", ]},
+    "external_dependencies": {
+        "python": [
+            "babel",
+        ]
+    },
     "data": [
         "security/ir.model.access.csv",
         "report/donation_report.xml",
@@ -51,7 +54,6 @@
         "views/communication_job_view.xml",
         "views/account_invoice_view.xml",
         "views/product_view.xml",
-        "views/res_partner_view.xml",
         "views/thankyou_config_view.xml",
         "views/generate_communication_wizard_view.xml",
     ],

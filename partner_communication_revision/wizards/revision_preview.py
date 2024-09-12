@@ -12,7 +12,7 @@ import io
 
 from PyPDF2 import PdfFileReader
 
-from odoo import models, api, fields
+from odoo import api, fields, models
 
 
 class RevisionPreview(models.TransientModel):
@@ -64,7 +64,7 @@ class RevisionPreview(models.TransientModel):
         return model + "," + str(self.env[model].search(criteria, limit=1).id)
 
     def unlink(self):
-        """ Remove preview jobs. """
+        """Remove preview jobs."""
         self.mapped("preview_job_id").unlink()
         return super().unlink()
 
@@ -83,7 +83,6 @@ class RevisionPreview(models.TransientModel):
             "body_html": self._context.get("working_text"),  # Custom text
             "subject": self._context.get("working_subject"),
             "auto_send": False,  # Prevents automatic sending
-            "lang": self.revision_id.lang,
         }
         if not self.preview_job_id:
             # Avoid creating attachments for the communication
@@ -97,15 +96,15 @@ class RevisionPreview(models.TransientModel):
         elif self.state == "active_revision":
             self.preview_job_id.write(job_vals)
             self.preview_job_id.with_context(
-                {"lang_preview": job_vals["lang"]}
+                {"lang_preview": self.revision_id.lang}
             ).quick_refresh()
 
         if config.report_id:
             # Create a PDF preview
             pdf_data = (
-                config.report_id
-                .with_context(must_skip_send_to_printer=True)
-                .render_qweb_pdf(self.preview_job_id.ids)
+                config.report_id.with_context(
+                    must_skip_send_to_printer=True
+                )._render_qweb_pdf(self.preview_job_id.ids)
             )[0]
             pdf = PdfFileReader(io.BytesIO(pdf_data))
             self.write(

@@ -7,7 +7,7 @@
 #    The licence is in the file __manifest__.py
 #
 ##############################################################################
-from odoo import api, models, fields
+from odoo import fields, models
 
 
 class FCP(models.Model):
@@ -31,7 +31,6 @@ class FCP(models.Model):
         return {
             "type": "ir.actions.act_window",
             "name": "Interventions",
-            "view_type": "form",
             "view_mode": "tree,form",
             "res_model": "compassion.intervention",
             "res_id": self.intervention_ids.ids,

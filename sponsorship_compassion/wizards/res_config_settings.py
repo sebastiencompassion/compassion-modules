@@ -8,61 +8,31 @@
 #
 ##############################################################################
 
-from odoo import models, fields
+from odoo import fields, models
 
 
 class StaffNotificationSettings(models.TransientModel):
-    """ Settings configuration for any Notifications."""
+    """Settings configuration for any Notifications."""
 
     _inherit = "res.config.settings"
 
     time_allowed_for_gifts = fields.Integer(
         help="Set number of days after sponsorship ending where gifts to the child "
-             "are still allowed"
+        "are still allowed",
+        config_parameter="sponsorship_compassion.time_allowed_for_gifts",
+        default=90,
     )
     time_allowed_for_letters = fields.Integer(
         help="Set number of days after sponsorship ending where letters to the child "
-             "are still allowed"
+        "are still allowed",
+        config_parameter="sponsorship_compassion.time_allowed_for_letters",
+        default=90,
     )
 
-    def set_values(self):
-        super().set_values()
-        self.env["ir.config_parameter"].sudo().set_param(
-            "sponsorship_compassion.time_allowed_for_gifts",
-            str(
-                self.time_allowed_for_gifts
-                if self.time_allowed_for_gifts
-                else 90
-            ),
-        )
-        self.env["ir.config_parameter"].sudo().set_param(
-            "sponsorship_compassion.time_allowed_for_letters",
-            str(
-                self.time_allowed_for_letters
-                if self.time_allowed_for_letters
-                else 90
-            ),
-        )
-
-    def get_values(self):
-        res = super().get_values()
-        param_obj = self.env["ir.config_parameter"].sudo()
-        res.update(
-            {
-                "time_allowed_for_gifts": int(
-                    param_obj.get_param(
-                        "sponsorship_compassion.time_allowed_for_gifts", None
-                    )
-                    or 90
-                )
-                or 90,
-                "time_allowed_for_letters": int(
-                    param_obj.get_param(
-                        "sponsorship_compassion.time_allowed_for_letters", None
-                    )
-                    or 90
-                )
-                or 90,
-            }
-        )
-        return res
+    christmas_inv_gen_month = fields.Integer(
+        help="Chose the month at which the Christmas invoices will be generated. The "
+        "due date will be one month after.",
+        config_parameter="sponsorship_compassion.christmas_inv_gen_month",
+        # Default invoices for Christmas gift are due for two months before Christmas
+        default=9,
+    )

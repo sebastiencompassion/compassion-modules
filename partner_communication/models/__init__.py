@@ -8,15 +8,15 @@
 #
 ##############################################################################
 
-from . import communication_config
-from . import communication_job
-from . import communication_attachment
-from . import res_partner
-from . import email
-from . import crm_phonecall
-from . import ir_attachment
-from . import mail_template
-from . import report_with_omr
-from . import phone_common
-from . import ir_actions
-from . import queue_job
+from . import (
+    communication_attachment,
+    communication_config,
+    communication_job,
+    communication_snippet,
+    email,
+    ir_actions,
+    ir_attachment,
+    mail_template,
+    queue_job,
+    res_partner,
+)

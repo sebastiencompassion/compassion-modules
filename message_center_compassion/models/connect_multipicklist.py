@@ -9,7 +9,7 @@
 ##############################################################################
 
 
-from odoo import api, models, fields, _
+from odoo import _, api, fields, models
 
 
 class ConnectMultipicklist(models.AbstractModel):
@@ -29,7 +29,23 @@ class ConnectMultipicklist(models.AbstractModel):
         )
     ]
 
-    
+    @api.model
+    def create(self, vals_list):
+        """Sometimes we get from Connect a same value in several fields trying to
+        create at the same time. We therefore try to find an already existing record
+        before creating a new one, to avoid errors."""
+        res = self
+        if not isinstance(vals_list, list):
+            vals_list = [vals_list]
+        for vals in vals_list:
+            name = vals["name"]
+            rec = self.search([("name", "=", name)])
+            if rec:
+                res += rec
+            else:
+                res += super().create(vals)
+        return res
+
     def get_res_view(self):
         """
         Method to find all children given a property
@@ -44,7 +60,6 @@ class ConnectMultipicklist(models.AbstractModel):
             "domain": [["id", "in", res_ids]],
         }
 
-    
     def get_res_ids(self):
         """
         :return: Recordset of records having a given property
@@ -55,25 +70,3 @@ class ConnectMultipicklist(models.AbstractModel):
                 self.env[self.res_model].search([(prop_id, "in", self.res_field)]).ids
             )
         return res_ids
-
-    def assign_translation(self):
-        """Assign an activity for manually translating the value."""
-        notify_ids = (
-            self.env["res.config.settings"].sudo().get_param(
-                "translate_notify_ids")
-        )
-        # Remove previous todos
-        self.activity_unlink("mail.mail_activity_data_todo")
-        if notify_ids:  # check if not False
-            for user_id in notify_ids[0][2]:
-                act_vals = {
-                    "user_id": user_id
-                }
-                self.activity_schedule(
-                    "mail.mail_activity_data_todo",
-                    summary=_("A new value needs translation"),
-                    note=_(
-                        "This is a new value that needs translation "
-                        "for printing the child dossier."),
-                    **act_vals
-                )

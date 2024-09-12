@@ -7,7 +7,7 @@
 #
 ##############################################################################
 
-from odoo import models, fields, api
+from odoo import fields, models
 
 
 class CommunicationRevisionHistory(models.Model):
@@ -17,7 +17,10 @@ class CommunicationRevisionHistory(models.Model):
     _order = "linked_revision_id desc,revision_number desc"
 
     revision_number = fields.Float(required=True, index=True)
-    revision_date = fields.Date(required=True)
+    revision_date = fields.Date(required=True, default=fields.Date.today)
+    update_user_id = fields.Many2one(
+        "res.users", "Modified by", default=lambda self: self.env.uid
+    )
     subject = fields.Char()
     raw_subject = fields.Char()
     body_html = fields.Html(sanitize=False)
@@ -26,25 +29,35 @@ class CommunicationRevisionHistory(models.Model):
         string="Revision history",
         required=True,
         index=True,
-        ondelete="cascade"
+        ondelete="cascade",
     )
     proposition_text = fields.Html()
 
     _sql_constraints = [
-        ("unique_version", "unique(linked_revision_id,revision_number)",
-         "This version is already existing!")
+        (
+            "unique_version",
+            "unique(linked_revision_id,revision_number)",
+            "This version is already existing!",
+        )
     ]
 
     def name_get(self):
         names = []
         for backup in self:
-            name = "{:.2f}".format(round(backup.revision_number, 2))
+            name = f"{round(backup.revision_number, 2):.2f}"
+            if self._context.get("show_revision_date"):
+                name += f" - {backup.revision_date}"
             names.append((backup.id, name))
         return names
 
     def save_revision_state(self):
         write_fields = [
-            "revision_number", "revision_date", "body_html", "raw_subject"]
+            "revision_number",
+            "revision_date",
+            "body_html",
+            "raw_subject",
+            "update_user_id",
+        ]
         if self.linked_revision_id.state == "active":
             # Also change revision texts when they are not being edited
             write_fields += ["proposition_text", "subject"]
@@ -53,7 +66,12 @@ class CommunicationRevisionHistory(models.Model):
 
     def get_vals(self):
         read_fields = [
-            "revision_number", "revision_date", "body_html", "raw_subject"]
+            "revision_number",
+            "revision_date",
+            "body_html",
+            "raw_subject",
+            "update_user_id",
+        ]
         if self.linked_revision_id.state == "active":
             # Also change revision texts when they are not being edited
             read_fields += ["proposition_text", "subject"]

@@ -1,6 +1,6 @@
 ##############################################################################
 #
-#    Copyright (C) 2016 Compassion CH (http://www.compassion.ch)
+#    Copyright (C) 2016-2022 Compassion CH (http://www.compassion.ch)
 #    Releasing children from poverty in Jesus' name
 #    @author: Emanuel Cino <ecino@compassion.ch>
 #
@@ -9,73 +9,35 @@
 ##############################################################################
 import logging
 
-from odoo import api, models, fields, _
-from odoo.exceptions import ValidationError
+from odoo import _, api, fields, models
+from odoo.exceptions import UserError, ValidationError
 
 logger = logging.getLogger(__name__)
 
 
-class OmrConfig(models.AbstractModel):
-    _name = "partner.communication.orm.config.abstract"
-    _description = "Partner Communication - ORM Config"
-
-    omr_enable_marks = fields.Boolean(
-        string="Enable OMR",
-        help="If set to True, the OMR marks are displayed in the " "communication.",
-    )
-    omr_should_close_envelope = fields.Boolean(
-        string="OMR should close the envelope",
-        help="If set to True, the OMR mark for closing the envelope is added "
-        "to the communication.",
-    )
-    omr_add_attachment_tray_1 = fields.Boolean(
-        string="Attachment from tray 1",
-        help="If set to True, the OMR mark for adding an "
-        "attachment from back 1 is added to the communication.",
-    )
-    omr_add_attachment_tray_2 = fields.Boolean(
-        string="Attachment from tray 2",
-        help="If set to True, the OMR mark for adding an "
-        "attachment from tray 2 is added to the communication.",
-    )
-    omr_top_mark_x = fields.Float(
-        default=7, help="X position in millimeters of the first OMR mark in the page"
-    )
-    omr_top_mark_y = fields.Float(
-        default=190,
-        help="Y position in millimeters of the first OMR mark in the page, "
-        "computed from the bottom of the page.",
-    )
-    omr_single_sided = fields.Boolean(
-        help="Will put the OMR marks on every page if the document is printed "
-        "single-sided."
-    )
-
-
 class CommunicationDefaults(models.AbstractModel):
-    """ Abstract class to share config settings between communication config
-    and communication job. """
+    """Abstract class to share config settings between communication config
+    and communication job."""
 
     _name = "partner.communication.defaults"
-    _description = "Partner Communication Defaults"
 
-    user_id = fields.Many2one(
-        "res.users", "From", domain=[("share", "=", False)], readonly=False
-    )
+    user_id = fields.Many2one("res.users", "From", domain=[("share", "=", False)])
     need_call = fields.Selection(
         "get_need_call",
         help="Indicates we should have a personal contact with the partner",
     )
     print_if_not_email = fields.Boolean(
         help="Should we print the communication if the sponsor don't have "
-             "an e-mail address"
+        "an e-mail address"
     )
     report_id = fields.Many2one(
         "ir.actions.report",
-        "Letter template",
+        "Print report",
         domain=[("model", "=", "partner.communication.job")],
         readonly=False,
     )
+    # printer_input_tray_id = fields.Many2one("printing.tray.input", "Paper Source")
+    # printer_output_tray_id = fields.Many2one("printing.tray.output", "Output Bin")
 
     @api.model
     def get_need_call(self):
@@ -85,35 +47,38 @@ class CommunicationDefaults(models.AbstractModel):
         ]
 
 
-class CommunicationOmrConfig(models.Model):
-    _name = "partner.communication.omr.config"
-    _inherit = "partner.communication.orm.config.abstract"
-    _description = "Communication OMR config"
-
-    config_id = fields.Many2one("partner.communication.config", "Communication type",
-                                readonly=False
-                                )
-    lang_id = fields.Many2one("res.lang", "Language", readonly=False)
-    user_id = fields.Many2one("res.users", "From", domain=[("share", "=", False)],
-                              readonly=False
-                              )
-
-
-class CommunicationPrinterConfig(models.Model):
-
-    _name = "partner.communication.printer.config"
-    _description = "Communication Printer Config"
+class CommunicationDefaultConfig(models.Model):
+    _name = "partner.communication.default.config"
+    _inherit = "partner.communication.defaults"
+    _description = "Communication Default Config"
 
     config_id = fields.Many2one("partner.communication.config", "Communication type")
-    lang_id = fields.Many2one("res.lang", "Language")
+    lang_id = fields.Many2one(
+        "res.lang",
+        "Language",
+        help="This config will only apply to communications in selected language.",
+    )
+    user_id = fields.Many2one(
+        string="User",
+        help="This config will only apply for communications from this user",
+    )
 
-    printer_input_tray_id = fields.Many2one("printing.tray.input", "Paper Source")
-    printer_output_tray_id = fields.Many2one("printing.tray.output", "Output Bin")
+    def create(self, vals_list):
+        for vals in vals_list:
+            if not vals.get("user_id") and not vals.get("lang_id"):
+                raise UserError(
+                    _(
+                        "The config should apply at least for a user or a language, "
+                        "otherwise you can simply change the settings in the general "
+                        "configuration."
+                    )
+                )
+        return super().create(vals_list)
 
 
 class CommunicationConfig(models.Model):
-    """ This class allows to configure if and how we will inform the
-    sponsor when a given event occurs. """
+    """This class allows to configure if and how we will inform the
+    sponsor when a given event occurs."""
 
     _name = "partner.communication.config"
     _inherit = "partner.communication.defaults"
@@ -160,17 +125,14 @@ class CommunicationConfig(models.Model):
         "report_name is the name of the report used for printing,"
         "b64_data is the binary of the attachment"
     )
-    omr_config_ids = fields.One2many(
-        comodel_name="partner.communication.omr.config",
+    default_config_ids = fields.One2many(
+        comodel_name="partner.communication.default.config",
         inverse_name="config_id",
-        string="OMR Configuration",
+        string="Custom Configuration",
         readonly=False,
     )
-    printer_config_ids = fields.One2many(
-        comodel_name="partner.communication.printer.config",
-        inverse_name="config_id",
-        string="Printer Configuration",
-        readonly=False
+    forbid_merging = fields.Boolean(
+        help="If selected, disable the automatic merging of communications",
     )
     active = fields.Boolean(default=True)
 
@@ -179,14 +141,13 @@ class CommunicationConfig(models.Model):
     ##########################################################################
     @api.constrains("send_mode_pref_field")
     def _validate_config(self):
-        """ Test if the config is valid. """
+        """Test if the config is valid."""
         for config in self.filtered("send_mode_pref_field"):
             valid = hasattr(self.env["res.partner"], config.send_mode_pref_field)
             if not valid:
                 raise ValidationError(
-                    _(
-                        "Following field does not exist in res.partner: %s."
-                    ) % config.send_mode_pref_field
+                    _("Following field does not exist in res.partner: %s.")
+                    % config.send_mode_pref_field
                 )
 
     @api.constrains("report_id")
@@ -216,18 +177,12 @@ class CommunicationConfig(models.Model):
     ##########################################################################
     #                             PUBLIC METHODS                             #
     ##########################################################################
-    def get_config_for_lang(self, lang):
-        omr_config = self.omr_config_ids.filtered(lambda c: not c.lang_id)[:1]
-        for config in self.omr_config_ids:
+    def get_default_config(self, lang):
+        default_config = self.default_config_ids.filtered(lambda c: not c.lang_id)[:1]
+        for config in self.default_config_ids:
             if config.lang_id == lang:
-                omr_config = config
-
-        printer_config = self.printer_config_ids.filtered(lambda c: not c.lang_id)[:1]
-        for config in self.printer_config_ids:
-            if config.lang_id == lang:
-                printer_config = config
-
-        return omr_config, printer_config
+                default_config = config
+        return default_config
 
     @api.model
     def get_send_mode(self):
@@ -257,7 +212,7 @@ class CommunicationConfig(models.Model):
     def build_inform_mode(
         self, partner, communication_send_mode, print_if_not_email, send_mode_pref_field
     ):
-        """ Returns how the partner should be informed for the given
+        """Returns how the partner should be informed for the given
         communication (digital, physical or False).
         It makes the product of the communication preference and the partner
         preference :
@@ -284,58 +239,18 @@ class CommunicationConfig(models.Model):
         :param send_mode_pref_field string
         :returns: send_mode (physical/digital/False), auto_mode (True/False)
         """
-        # First key is the comm send_mode, second key is the partner send_mode
-        # value is the send_mode that should be selected.
-        send_priority = {
-            "physical": {
-                "none": "none",
-                "physical": "physical",
-                "digital": "physical",
-                "digital_only": "digital",
-                "both": "physical",
-            },
-            "digital": {
-                "none": "none",
-                "physical": "physical" if print_if_not_email else "none",
-                "digital": "digital",
-                "digital_only": "digital",
-                "both": "both" if print_if_not_email else "digital",
-            },
-            "digital_only": {
-                "none": "none",
-                "physical": "digital" if partner.email else "none",
-                "digital": "digital",
-                "digital_only": "digital",
-                "both": "digital",
-            },
-            "both": {
-                "none": "none",
-                "physical": "physical",
-                "digital": "both",
-                "digital_only": "digital",
-                "both": "both",
-            },
-        }
-
+        send_priority = self._get_send_priority(partner, print_if_not_email)
         if communication_send_mode != "partner_preference":
             partner_mode = getattr(
                 partner,
                 send_mode_pref_field or "global_communication_delivery_preference",
                 partner.global_communication_delivery_preference,
             )
+            auto_mode = self._get_auto_mode(partner_mode, communication_send_mode)
             if communication_send_mode == partner_mode:
                 send_mode = communication_send_mode
-                auto_mode = "auto" in send_mode or send_mode == "both"
                 digital_only = "digital_only" in partner_mode
             else:
-                auto_mode = (
-                    "auto" in partner_mode
-                    and "auto" in communication_send_mode
-                    or "auto" in partner_mode
-                    and communication_send_mode == "both"
-                    or "auto" in communication_send_mode
-                    and partner_mode == "both"
-                )
                 comm_mode = communication_send_mode.replace("auto_", "")
                 partner_mode = partner_mode.replace("auto_", "")
                 send_mode = send_priority.get(comm_mode, {}).get(partner_mode, "none")
@@ -370,3 +285,52 @@ class CommunicationConfig(models.Model):
                 send_mode = False
 
         return send_mode, auto_mode
+
+    def _get_send_priority(self, partner, print_if_not_email):
+        # First key is the comm send_mode, second key is the partner send_mode
+        # value is the send_mode that should be selected.
+        return {
+            "physical": {
+                "none": "none",
+                "physical": "physical",
+                "digital": "physical",
+                "digital_only": "digital",
+                "both": "physical",
+            },
+            "digital": {
+                "none": "none",
+                "physical": "physical" if print_if_not_email else "none",
+                "digital": "digital",
+                "digital_only": "digital",
+                "both": "both" if print_if_not_email else "digital",
+            },
+            "digital_only": {
+                "none": "none",
+                "physical": "digital" if partner.email else "none",
+                "digital": "digital",
+                "digital_only": "digital",
+                "both": "digital",
+            },
+            "both": {
+                "none": "none",
+                "physical": "physical",
+                "digital": "both",
+                "digital_only": "digital",
+                "both": "both",
+            },
+        }
+
+    def _get_auto_mode(self, partner_mode, communication_mode):
+        """Gets the computed auto_mode
+        :param partner_mode: auto_mode from the partner preference
+        :param communication_mode: auto_mode from the communication config."""
+        return (
+            "auto" in partner_mode
+            and "auto" in communication_mode
+            or "auto" in partner_mode
+            and communication_mode == "both"
+            or "auto" in communication_mode
+            and partner_mode == "both"
+            or partner_mode == "both"
+            and communication_mode == "both"
+        )

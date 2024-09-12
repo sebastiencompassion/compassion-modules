@@ -9,16 +9,17 @@
 ##############################################################################
 
 
-from odoo import api, models, fields, _
+from odoo import _, api, fields, models
 
 
 class FCPProperty(models.AbstractModel):
-    """ An FCP property is a class linked to projects to describe
-    the project hobbies/activities/etc... in several languages. """
+    """An FCP property is a class linked to projects to describe
+    the project hobbies/activities/etc... in several languages."""
 
     _name = "fcp.property"
     _inherit = ["connect.multipicklist", "compassion.mapped.model"]
     _description = "FCP Property"
+    _rec_name = "value"
 
     res_model = "compassion.project"
     value = fields.Char(translate=True)

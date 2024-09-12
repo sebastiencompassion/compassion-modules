@@ -36,7 +36,8 @@
     },
     "Population": "community_population",
     "PrimaryDiet": {
-      "field": "primary_diet_ids.name",
+      "field": "primary_diet_ids.value",
+      "search_key": "name",
       "search_relational_record": true
     },
     "PrimaryEthnicGroup": "primary_ethnic_group_name",
@@ -46,7 +47,8 @@
       "from_json_conversion": "json_value.lower().title()"
     },
     "PrimaryOccupation": {
-      "field": "primary_adults_occupation_ids.name",
+      "field": "primary_adults_occupation_ids.value",
+      "search_key": "name",
       "search_relational_record": true
     },
     "RainyMonths": {
@@ -73,37 +75,40 @@
     "ChildDevelopmentCenterName": "name",
     "ChildDevelopmentCenterNameLocalLanguage": "child_center_original_name",
     "ChurchMinistry": {
-      "field": "ministry_ids.name",
-      "search_relational_record": true,
-      "allow_relational_creation": true
+      "field": "ministry_ids.value",
+      "search_key": "name",
+      "search_relational_record": true
     },
     "City": "city",
     "Cluster": "cluster",
     "CognitiveActivities0To5": {
-      "field": "cognitive_activity_babies_ids.name",
+      "field": "cognitive_activity_babies_ids.value",
+      "search_key": "name",
       "search_relational_record": true
     },
     "CognitiveActivities6To11": {
-      "field": "cognitive_activity_kids_ids.name",
-      "search_relational_record": true
+      "field": "cognitive_activity_kids_ids.value",
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "CognitiveActivities12Plus": {
-      "field": "cognitive_activity_ados_ids.name",
-      "search_relational_record": true
+      "field": "cognitive_activity_ados_ids.value",
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "CommunityInvolvement": {
-      "field": "involvement_ids.name",
+      "field": "involvement_ids.value",
       "search_relational_record": true,
-      "allow_relational_creation": true
+      "search_key": "name"
     },
     "ComputersForBeneficiaryUse": "nb_child_computers",
     "ComputersForStaffUse": "nb_staff_computers",
     "CountryDivision": "state_province",
     "ElectricalPowerAvailability": "electrical_power",
     "Facilities": {
-      "field": "facility_ids.name",
+      "field": "facility_ids.value",
       "search_relational_record": true,
-      "allow_relational_creation": true
+      "search_key": "name"
     },
     "FacilityOwnershipStatus": "church_ownership",
     "FirstLetterWritingMonth": "first_scheduled_letter",
@@ -116,13 +121,14 @@
     "ICPStatus": "status",
     "ICP_ID": "fcp_id",
     "ImplementedProgram": {
-      "field": "implemented_program_ids.name",
+      "field": "implemented_program_ids.value",
       "search_relational_record": true,
-      "allow_relational_creation": true
+      "search_key": "name"
     },
     "InterestedGlobalPartnerName": {
       "field": "interested_partner_ids.name",
-      "search_relational_record": true
+      "search_relational_record": true,
+      "allow_relational_creation": false
     },
     "InternationalDenominationAffiliation": "international_affiliation",
     "InternetAccess": "church_internet_access",
@@ -135,16 +141,19 @@
     "NumberOfSponsorshipBeneficiaries": "nb_cdsp_kids",
     "NumberOfSurvivalBeneficiaries": "nb_csp_kids",
     "PhysicalActivities0To5": {
-      "field": "physical_activity_babies_ids.name",
-      "search_relational_record": true
+      "field": "physical_activity_babies_ids.value",
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "PhysicalActivities6To11": {
-      "field": "physical_activity_kids_ids.name",
-      "search_relational_record": true
+      "field": "physical_activity_kids_ids.value",
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "PhysicalActivities12Plus": {
-      "field": "physical_activity_ados_ids.name",
-      "search_relational_record": true
+      "field": "physical_activity_ados_ids.value",
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "PostalCode": "zip_code",
     "PreferredLanguage": {
@@ -154,47 +163,53 @@
     "ProgramEndDate": "program_end_date",
     "ProgramStartDate": "program_start_date",
     "ProgramsOfInterest": {
-      "field": "interested_program_ids.name",
+      "field": "interested_program_ids.value",
       "search_relational_record": true,
-      "allow_relational_creation": true
+      "search_key": "name"
     },
     "ProjectActivitiesForFamilies": "activities_for_parents",
     "SchoolCostPaidByICP": {
-      "field": "school_cost_paid_ids.name",
+      "field": "school_cost_paid_ids.value",
       "search_relational_record": true,
-      "allow_relational_creation": true
+      "search_key": "name"
     },
     "SecondLetterWritingMonth": "second_scheduled_letter",
     "SocialMedia": "social_media_site",
     "SocioEmotionalActivities0To5": {
-      "field": "socio_activity_babies_ids.name",
-      "search_relational_record": true
+      "field": "socio_activity_babies_ids.value",
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "SocioEmotionalActivities6To11": {
-      "field": "socio_activity_kids_ids.name",
-      "search_relational_record": true
+      "field": "socio_activity_kids_ids.value",
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "SocioEmotionalActivities12Plus": {
-      "field": "socio_activity_ados_ids.name",
-      "search_relational_record": true
+      "field": "socio_activity_ados_ids.value",
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "SpiritualActivities0To5": {
-      "field": "spiritual_activity_babies_ids.name",
-      "search_relational_record": true
+      "field": "spiritual_activity_babies_ids.value",
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "SpiritualActivities6To11": {
-      "field": "spiritual_activity_kids_ids.name",
-      "search_relational_record": true
+      "field": "spiritual_activity_kids_ids.value",
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "SpiritualActivities12Plus": {
-      "field": "spiritual_activity_ados_ids.name",
-      "search_relational_record": true
+      "field": "spiritual_activity_ados_ids.value",
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "Territory": "territory",
     "UtilitiesOnSite": {
-      "field": "utility_ids.name",
+      "field": "utility_ids.value",
       "search_relational_record": true,
-      "allow_relational_creation": true
+      "search_key": "name"
     },
     "Website": "website",
     "WeeklyChildAttendance": "weekly_child_attendance"

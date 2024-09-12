@@ -10,7 +10,7 @@
 import re
 import sys
 
-from odoo import models, fields, api, _
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
 
 
@@ -21,6 +21,7 @@ class InterventionSearch(models.TransientModel):
 
     _inherit = "compassion.mapped.model"
     _name = "compassion.intervention.search"
+    _description = "Intervention search"
 
     ##########################################################################
     #                                 FIELDS                                 #
@@ -59,7 +60,6 @@ class InterventionSearch(models.TransientModel):
         "search_id",
         "fcp_id",
         "FCPs",
-        oldname="icp_ids",
         readonly=False,
     )
     field_office_ids = fields.Many2many(
@@ -73,6 +73,7 @@ class InterventionSearch(models.TransientModel):
     remaining_amount_equal = fields.Float()
     remaining_amount_greater = fields.Float("Remaining amount greater than")
     remaining_amount_lower = fields.Float("Remaining amount lower than")
+    disburse_without_commitment = fields.Boolean()
 
     ##########################################################################
     #                             FIELDS METHODS                             #
@@ -123,7 +124,7 @@ class InterventionSearch(models.TransientModel):
         def _get_filter(field_name, operator_id, value):
             field_id = (
                 self.env["ir.model.fields"]
-                    .search(
+                .search(
                     [
                         ("model", "=", "compassion.global.intervention"),
                         ("name", "=", field_name),
@@ -161,6 +162,8 @@ class InterventionSearch(models.TransientModel):
         if self.field_office_ids:
             fo_codes = ";".join(self.field_office_ids.mapped("field_office_id"))
             new_filters.append(_get_filter("field_office_id", anyof_id, fo_codes))
+        if self.disburse_without_commitment:
+            new_filters.append(_get_filter("disburse_without_commitment", is_id, "T"))
         if self.remaining_amount_equal:
             equalto_id = self.env.ref("message_center_compassion.equalto").id
             new_filters.append(
@@ -218,11 +221,10 @@ class InterventionSearch(models.TransientModel):
                 # Split only if a comma is outside of parenthesis
                 # (to handle the case of Sanitation subcategory)
                 if (
-                        re.search(
-                            r",\s*(?![^()]*\))",
-                            json_data["InterventionSubCategory_Name"]
-                        )
-                        is not None
+                    re.search(
+                        r",\s*(?![^()]*\))", json_data["InterventionSubCategory_Name"]
+                    )
+                    is not None
                 ):
                     json_data["InterventionSubCategory_Name"] = json_data[
                         "InterventionSubCategory_Name"
@@ -233,19 +235,4 @@ class InterventionSearch(models.TransientModel):
                     ].replace(",", "")
 
         odoo_data = super().json_to_data(json, mapping_name)
-        if "intervention_ids" in odoo_data:
-            intervention_obj = self.env["compassion.global.intervention"]
-            interventions = list()
-            for intervention_vals in odoo_data["intervention_ids"]:
-                intervention_id = intervention_vals["intervention_id"]
-                intervention = intervention_obj.search(
-                    [("intervention_id", "=", intervention_id)]
-                )
-                if intervention:
-                    intervention.write(intervention_vals)
-                else:
-                    intervention = intervention_obj.create(intervention_vals)
-                interventions.append((4, intervention.id))
-
-            odoo_data["intervention_ids"] = interventions or False
         return odoo_data

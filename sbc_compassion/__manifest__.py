@@ -8,7 +8,7 @@
 #                        /_/
 #                            in Jesus' name
 #
-#    Copyright (C) 2015-2017 Compassion CH (http://www.compassion.ch)
+#    Copyright (C) 2015-2022 Compassion CH (http://www.compassion.ch)
 #    @author: Emanuel Cino <ecino@compassion.ch>
 #
 #    This program is free software: you can redistribute it and/or modify
@@ -27,27 +27,25 @@
 ##############################################################################
 # pylint: disable=C8101
 {
-    "name": "Sponsor to beneficiary communication",
-    "version": "14.0.1.0.0",
-    "category": "Other",
-    "summary": "SBC - Supporter to Beneficiary Communication",
+    "name": "Sponsor to Participant communication",
+    "version": "14.0.1.0.1",
+    "category": "Compassion",
+    "summary": "SBC - Supporter to Participant Communication",
     "sequence": 150,
     "author": "Compassion CH",
     "license": "AGPL-3",
-    "website": "http://www.compassion.ch",
+    "website": "https://github.com/CompassionCH/compassion-modules",
     "depends": [
         "sponsorship_compassion",
     ],
     "external_dependencies": {
+        "bin": ["php"],
         "python": [
-            "magic",
+            "python-magic",
             "wand",
             "pyzbar",
-            "pdfminer",
-            "PyPDF2",
-            "openupgradelib",
-            "fitz",  # PyMuPDF
-        ]
+            "PyMuPDF",  # TODO replace by Odoo standard library
+        ],
     },
     "data": [
         "security/ir.model.access.csv",
@@ -71,7 +69,9 @@
         "data/gmc_action.xml",
         "data/queue_job.xml",
     ],
-    "demo": ["demo/correspondence_template.xml", ],
+    "demo": [
+        "demo/correspondence_template.xml",
+    ],
     "installable": True,
     "auto_install": False,
     "post_init_hook": "load_mappings",

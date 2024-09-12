@@ -1,5 +1,7 @@
-import langdetect
 import logging
+
+import langdetect
+
 from odoo import models
 
 logger = logging.getLogger(__name__)
@@ -23,17 +25,17 @@ class OSD(models.AbstractModel):
 
         try:
             languages = langdetect.detect_langs(text)
-        except:
+        except Exception:
             return language
 
         languages = [(lang.lang, lang.prob) for lang in languages]
         logger.debug(languages)
 
         # ensure that the probabilities are sorted in decreasing order
-        languages.sort(key=lambda l: -l[1])
+        languages.sort(key=lambda lang: -lang[1])
         # filter out languages hat are not looked for
         languages = [lang for lang in languages if lang[0] in self.languages_langdetect]
-        sum_p = sum([lang[1] for lang in languages])
+        sum_p = sum(lang[1] for lang in languages)
         languages = [(lang[0], lang[1] / sum_p) for lang in languages]
         logger.debug(languages)
         languages = [lang for lang in languages if lang[1] >= threshold]

@@ -3,10 +3,13 @@
   "model": "recurring.contract",
   "mapping": {
     "Commitment_ID": {
-      "field": "global_id"
+      "field": "gmc_commitment_id"
+    },
+    "CorrespondentCommitmentID": {
+      "field": "gmc_correspondent_commitment_id"
     },
     "CommitmentID": {
-      "field": "global_id"
+      "field": "gmc_commitment_id"
     },
     "CompassNeedKey": {
       "field": "child_id.local_id",
@@ -16,10 +19,12 @@
       "field": "end_date"
     },
     "CorrespondentCorrespondenceLanguage": {
-      "field": null
+      "field": "reading_language.name",
+      "search_relational_record": true
     },
     "CorrespondentSupporterGlobalID": {
-      "field": null
+      "field": "correspondent_id.global_id",
+      "search_relational_record": true
     },
     "FinalCommitmentOfLine": {
       "to_json_conversion": "''"
@@ -44,7 +49,7 @@
       "search_relational_record": true
     },
     "SponsorSupporterGlobalID": {
-      "field": "correspondent_id.global_id",
+      "field": "partner_id.global_id",
       "search_relational_record": true
     },
     "Beneficiary_GlobalID": {
@@ -61,22 +66,22 @@
       "field": null
     },
     "ParentCommitmentID": {
-      "field": "parent_id.global_id"
+      "field": "parent_id.gmc_commitment_id"
     },
     "CommitmentEndDate": {
       "field": "end_date"
     },
     "CorrespondentGlobalPartnerID": {
-      "to_json_conversion": "config.get('connect_gpid')"
+      "to_json_conversion": "gpid"
     },
     "IsSponsorCorrespondent": {
       "to_json_conversion": "True"
     },
     "SponsorGlobalPartnerID": {
-      "to_json_conversion": "config.get('connect_gpid')"
+      "to_json_conversion": "gpid"
     },
     "GlobalPartner_ID": {
-      "to_json_conversion": "config.get('connect_gpid')"
+      "to_json_conversion": "gpid"
     }
   }
 }

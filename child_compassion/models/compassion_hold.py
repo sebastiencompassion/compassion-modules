@@ -12,16 +12,14 @@ from datetime import datetime, timedelta
 from enum import Enum
 from functools import reduce
 
-from odoo import api, models, fields, _
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
-from odoo.tools import config
 
 logger = logging.getLogger(__name__)
-test_mode = config.get("test_enable")
 
 
 class HoldType(Enum):
-    """ Defines available Hold Types. """
+    """Defines available Hold Types."""
 
     CHANGE_COMMITMENT_HOLD = "Change Commitment Hold"
     CONSIGNMENT_HOLD = "Consignment Hold"
@@ -39,7 +37,7 @@ class HoldType(Enum):
 
     @staticmethod
     def from_string(hold_type):
-        """ Gets the HoldType given its string representation. """
+        """Gets the HoldType given its string representation."""
         for etype in HoldType:
             if etype.value == hold_type:
                 return etype
@@ -47,7 +45,7 @@ class HoldType(Enum):
 
 
 class AbstractHold(models.AbstractModel):
-    """ Defines the basics of each model that must set up hold values. """
+    """Defines the basics of each model that must set up hold values."""
 
     _name = "compassion.abstract.hold"
     _description = "Compassion Abstract Hold"
@@ -98,7 +96,7 @@ class AbstractHold(models.AbstractModel):
         """
         config_obj = self.env["res.config.settings"]
         hold_param = hold_type.name.lower() + "_duration"
-        duration = config_obj.sudo().get_param(hold_param)
+        duration = config_obj.sudo().get_param(hold_param, 15)
         diff = (
             timedelta(days=duration)
             if hold_type != HoldType.E_COMMERCE_HOLD
@@ -117,7 +115,7 @@ class AbstractHold(models.AbstractModel):
     #                             PUBLIC METHODS                             #
     ##########################################################################
     def get_fields(self):
-        """ Returns the fields for which we want to know the value. """
+        """Returns the fields for which we want to know the value."""
         return [
             "type",
             "expiration_date",
@@ -132,8 +130,8 @@ class AbstractHold(models.AbstractModel):
         ]
 
     def get_hold_values(self):
-        """ Get the field values of one record.
-            :return: Dictionary of values for the fields
+        """Get the field values of one record.
+        :return: Dictionary of values for the fields
         """
         self.ensure_one()
         vals = self.read(self.get_fields())[0]
@@ -166,6 +164,7 @@ class CompassionHold(models.Model):
         readonly=True,
         default="draft",
         tracking=True,
+        index=True,
     )
     reinstatement_reason = fields.Char(readonly=True)
     reservation_id = fields.Many2one(
@@ -178,12 +177,14 @@ class CompassionHold(models.Model):
     # Track field changes
     ambassador = fields.Many2one(tracking=True, readonly=False)
     primary_owner = fields.Many2one(tracking=True, readonly=False)
-    type = fields.Selection(tracking=True)
+    type = fields.Selection(tracking=True, index=True)
     channel = fields.Selection(tracking=True)
-    expiration_date = fields.Datetime(tracking=True,
-                                      required=False,
-                                      default=datetime.now() + timedelta(days=60)
-                                      )
+    expiration_date = fields.Datetime(
+        tracking=True,
+        required=False,
+        default=datetime.now() + timedelta(days=60),
+        index=True,
+    )
 
     _sql_constraints = [
         ("hold_id", "unique(hold_id)", "The hold already exists in database."),
@@ -205,9 +206,9 @@ class CompassionHold(models.Model):
 
     def write(self, vals):
         if "expiration_date" in vals and self.filtered(
-                lambda h: h.expiration_date < datetime.now()):
-            raise UserError(_(
-                "The expiration date as been reach and thus can't be changed."))
+            lambda h: h.expiration_date < datetime.now()
+        ):
+            raise UserError(_("Sorry, the child is no longer available."))
 
         res = super().write(vals)
         notify_vals = ["primary_owner", "type", "expiration_date"]
@@ -223,7 +224,9 @@ class CompassionHold(models.Model):
         a child anymore (child released).
         :return: True
         """
-        active_holds = self.filtered(lambda h: h.state == "active")
+        active_holds = self.filtered(
+            lambda h: h.state == "active" and h.expiration_date > datetime.now()
+        )
         active_holds.release_hold()
         inactive_holds = self - active_holds
         super(CompassionHold, inactive_holds).unlink()
@@ -246,22 +249,25 @@ class CompassionHold(models.Model):
         messages.process_messages()
         failed = messages.filtered(lambda m: "failure" in m.state)
         if failed:
-            self.env.cr.rollback()
             raise UserError("\n\n".join(failed.mapped("failure_reason")))
 
     def hold_sent(self, vals):
-        """ Called when hold is sent to Connect. """
+        """Called when hold is sent to Connect."""
         self.write(vals)
         # update compassion children with hold_id received
         for hold in self:
             child_to_update = hold.child_id
             if hold.hold_id:
                 hold.state = "active"
-                if not child_to_update.hold_id:
+                old_hold = child_to_update.hold_id
+                if not old_hold:
                     child_to_update.child_consigned(hold.id)
-                # Always commit after receiving a hold to avoid losing it
-                if not test_mode:
-                    self.env.cr.commit()  # pylint: disable=invalid-commit
+                elif (
+                    old_hold.hold_id != hold.hold_id
+                    and old_hold.expiration_date < datetime.now()
+                ):
+                    child_to_update.hold_id = hold
+                    old_hold.unlink()
             else:
                 # Release child if no hold_id received
                 hold.unlink()
@@ -269,7 +275,7 @@ class CompassionHold(models.Model):
 
     @api.model
     def reinstatement_notification(self, commkit_data):
-        """ Called when a child was Reinstated. """
+        """Called when a child was Reinstated."""
         # Reinstatement holds are available for 90 days (Connect default)
         in_90_days = datetime.now() + timedelta(days=90)
 
@@ -286,7 +292,7 @@ class CompassionHold(models.Model):
                 "expiration_date": in_90_days,
                 "state": "active",
                 "comments": "Child was reinstated! Be sure to propose it to its "
-                            "previous sponsor.",
+                "previous sponsor.",
             }
         )
         hold = self.create(vals)
@@ -306,14 +312,12 @@ class CompassionHold(models.Model):
         return [hold.id]
 
     def reservation_to_hold(self, commkit_data):
-        """ Called when a reservation gots converted to a hold. """
+        """Called when a reservation gots converted to a hold."""
         hold_data = commkit_data.get("ReservationConvertedToHoldNotification")
         child_global_id = hold_data and hold_data.get("Beneficiary_GlobalID")
         if child_global_id:
             child = self.env["compassion.child"].create({"global_id": child_global_id})
-            hold = self.env["compassion.hold"].create(
-                self.json_to_data(hold_data)
-            )
+            hold = self.env["compassion.hold"].create(self.json_to_data(hold_data))
             hold.write(
                 {
                     "state": "active",
@@ -326,8 +330,8 @@ class CompassionHold(models.Model):
             reservation_state = "active"
             number_reserved = reservation.number_reserved + 1
             if (
-                    number_reserved == reservation.number_of_beneficiaries
-                    or reservation.reservation_type == "child"
+                number_reserved == reservation.number_of_beneficiaries
+                or reservation.reservation_type == "child"
             ):
                 reservation_state = "expired"
             reservation.write(
@@ -341,8 +345,7 @@ class CompassionHold(models.Model):
                 ),
                 subject=_("%s - Reservation converted to hold") % child.local_id,
                 partner_ids=hold.primary_owner.partner_id.ids,
-                type="comment",
-                subtype="mail.mt_comment",
+                subtype_xmlid="mail.mt_comment",
                 content_subtype="plaintext",
             )
 
@@ -367,7 +370,7 @@ class CompassionHold(models.Model):
         try:
             messages.process_messages()
             self.hold_released()
-        except:
+        except Exception:
             self.env.clear()
             messages.env.clear()
             logger.error("Some holds couldn't be released.")
@@ -378,7 +381,7 @@ class CompassionHold(models.Model):
         return True
 
     def hold_released(self, vals=None):
-        """ Called when release message was successfully sent to GMC. """
+        """Called when release message was successfully sent to GMC."""
         self.write({"state": "expired"})
         self.mapped("child_id").child_released()
         return True
@@ -418,8 +421,10 @@ class CompassionHold(models.Model):
 
         # avoid realising a hold (and related child) that has already been released
         if hold and hold.state == "expired":
-            logger.warning("Received Beneficiary Hold Removal order from GMC for"
-                           "already expired hold.")
+            logger.warning(
+                "Received Participant Hold Removal order from GMC for"
+                "already expired hold."
+            )
             return hold.ids
 
         if not hold:
@@ -454,38 +459,51 @@ class CompassionHold(models.Model):
         settings = self.env["res.config.settings"].sudo()
         first_extension = settings.get_param("no_money_hold_duration")
         second_extension = settings.get_param("no_money_hold_extension")
-        body = (
-            "The no money hold for child {local_id} was expiring on "
-            "{old_expiration} and was extended to {new_expiration}."
-            "{additional_text}"
-        )
+
         for hold in self.filtered(lambda h: h.no_money_extension < 3):
+            old_date = hold.expiration_date
             hold_extension = (
                 first_extension if not hold.no_money_extension else second_extension
             )
             new_hold_date = hold.expiration_date + timedelta(days=hold_extension)
-            next_extension = hold.no_money_extension
-            if hold.type == HoldType.NO_MONEY_HOLD.value:
-                next_extension += 1
-            hold_vals = {
-                "no_money_extension": next_extension,
-            }
-            hold_vals["expiration_date"] = new_hold_date
-            old_date = hold.expiration_date
-            hold.write(hold_vals)
             values = {
                 "local_id": hold.child_id.local_id,
                 "old_expiration": old_date,
                 "new_expiration": new_hold_date.strftime("%d %B %Y"),
-                "additional_text": additional_text or "",
+                "extension_description": "first"
+                if not hold.no_money_extension
+                else "second",
+                "additional_text": str(additional_text) if additional_text else "",
             }
-            hold.message_post(
-                body=_(body.format(**values)),
-                subject=_("No money hold extension"), type="comment",
-            )
-            # Commit after hold is updated
-            if not test_mode:
-                self.env.cr.commit()  # pylint:disable=invalid-commit
+
+            if hold.child_id.sponsor_id:  # Check that a sponsorship exists
+                next_extension = hold.no_money_extension
+                if hold.type == HoldType.NO_MONEY_HOLD.value:
+                    next_extension += 1
+                hold_vals = {
+                    "no_money_extension": next_extension,
+                    "expiration_date": new_hold_date,
+                }
+                hold.write(hold_vals)
+
+                body = (
+                    "The no money hold for child {local_id} was expiring on "
+                    "{old_expiration} and was extended to {new_expiration} "
+                    "({extension_description} extension).{additional_text}"
+                )
+                hold.message_post(
+                    body=_(body.format(**values)),
+                    subject=_("No money hold extension"),
+                    subtype_xmlid="mail.mt_comment",
+                )
+
+            else:
+                body = _(
+                    "The no money hold for child {local_id} is expiring on "
+                    "{old_expiration} and will not be extended since "
+                    "no sponsorship exists for this child."
+                )
+                hold.message_post(body=body.format(**values))
 
     ##########################################################################
     #                              Mapping METHOD                            #

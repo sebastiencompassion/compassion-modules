@@ -8,7 +8,7 @@
 #
 ##############################################################################
 
-from odoo import api, models, _
+from odoo import _, models
 from odoo.tools.safe_eval import safe_eval
 
 
@@ -26,7 +26,6 @@ class QueueJob(models.Model):
             "type": "ir.actions.act_window",
             "res_model": model,
             "domain": [("id", "in", records)],
-            "view_type": "form",
             "view_mode": "tree,form",
         }
         return action

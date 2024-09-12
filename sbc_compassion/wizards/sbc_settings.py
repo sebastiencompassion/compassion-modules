@@ -8,18 +8,18 @@
 #
 ##############################################################################
 
-from odoo import api, models, fields
+from odoo import api, fields, models
 
 
 class SBCSettings(models.TransientModel):
-    """ Settings configuration for any Notifications."""
+    """Settings configuration for any Notifications."""
 
     _inherit = "res.config.settings"
 
     # Users to notify after Child Departure
     letter_responsible = fields.Many2one(
         "res.users",
-        string="Letter responsible for activity schedule",
+        string="Letter translation check unsuccessful",
         domain=[("share", "=", False)],
         readonly=False,
     )

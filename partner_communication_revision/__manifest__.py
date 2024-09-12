@@ -29,11 +29,11 @@
 # pylint: disable=C8101
 {
     "name": "Partner Communication Revisions",
-    "version": "14.0.1.0.0",
+    "version": "14.0.1.1.0",
     "category": "Other",
     "author": "Compassion CH",
     "license": "AGPL-3",
-    "website": "http://www.compassion.ch",
+    "website": "https://github.com/CompassionCH/compassion-modules",
     "depends": ["partner_communication", "web_tree_dynamic_colored_field"],  # OCA/web
     "external_dependencies": {"python": ["pyquery", "regex", "bs4", "PyPDF2"]},
     "data": [

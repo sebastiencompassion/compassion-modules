@@ -33,6 +33,9 @@
     "Description": {
       "field": "description"
     },
+    "DisburseWithoutCommitment": {
+      "field": "disburse_without_commitment"
+    },
     "InterventionCategory": {
       "field": "category_id.name",
       "search_relational_record": true
@@ -40,20 +43,20 @@
     "InterventionSubCategory_Name": {
       "field": "subcategory_ids.name",
       "search_relational_record": true,
-      "relational_raise_if_not_found": false
+      "allow_relational_creation": false
     },
     "ProposedStartDate": {
       "field": "proposed_start_date"
     },
     "ICP_ID": {
       "field": "fcp_ids.fcp_id",
-      "allow_relational_creation": true,
       "search_relational_record": true,
       "from_json_conversion": "json_value and json_value.split(',')"
     },
     "FieldOffice_ID": {
       "field": "field_office_id.field_office_id",
-      "search_relational_record": true
+      "search_relational_record": true,
+      "allow_relational_creation": false
     },
     "IsFieldOfficePriority": {
       "field": "is_fo_priority"

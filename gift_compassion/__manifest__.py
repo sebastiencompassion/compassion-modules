@@ -28,11 +28,11 @@
 # pylint: disable=C8101
 {
     "name": "Compassion Sponsorship Gifts",
-    "version": "14.0.1.0.0",
-    "category": "Other",
+    "version": "14.0.1.0.2",
+    "category": "Compassion",
     "author": "Compassion CH",
     "license": "AGPL-3",
-    "website": "http://www.compassion.ch",
+    "website": "https://github.com/CompassionCH/compassion-modules",
     "depends": ["sponsorship_compassion"],
     "data": [
         "security/ir.model.access.csv",
@@ -42,6 +42,7 @@
         "views/gift_view.xml",
         "views/settings_view.xml",
         "views/contracts_view.xml",
+        "views/account_move_view.xml",
         "data/gift_compassion_mapping.xml",
         "data/gmc_action.xml",
     ],

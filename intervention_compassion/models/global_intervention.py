@@ -10,14 +10,13 @@
 
 import logging
 
-from odoo import models, fields, api, _
+from odoo import _, api, fields, models
 
 logger = logging.getLogger(__name__)
 
 
 class GlobalIntervention(models.TransientModel):
-    """ Available child in the global childpool
-    """
+    """Available child in the global childpool"""
 
     _inherit = ["compassion.generic.intervention", "compassion.mapped.model"]
     _name = "compassion.global.intervention"
@@ -62,7 +61,6 @@ class GlobalIntervention(models.TransientModel):
         return {
             "name": _("Intervention Hold Request"),
             "type": "ir.actions.act_window",
-            "view_type": "form",
             "view_mode": "form",
             "res_model": "compassion.intervention.hold.wizard",
             "context": self.with_context(
@@ -86,8 +84,8 @@ class GlobalIntervention(models.TransientModel):
         data_array = list()
         for json_data in json:
             if (
-                    json_data["GlobalPartner_ID"]
-                    and json_data["GlobalPartner_ID"] not in country_codes
+                json_data["GlobalPartner_ID"]
+                and json_data["GlobalPartner_ID"] not in country_codes
             ):
                 del json_data["GlobalPartner_ID"]
             data = super().json_to_data(json_data, mapping_name)

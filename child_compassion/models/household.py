@@ -9,7 +9,7 @@
 ##############################################################################
 
 
-from odoo import api, models, fields, _
+from odoo import _, api, fields, models
 
 
 class Household(models.Model):
@@ -44,7 +44,9 @@ class Household(models.Model):
     mother_alive = fields.Selection("_get_yes_no")
     mother_living_with_child = fields.Boolean()
     youth_headed_household = fields.Boolean()
-    primary_caregiver = fields.Char(string="Primary caregiver", compute="_compute_primary_caregiver")
+    primary_caregiver = fields.Char(
+        string="Primary caregiver", compute="_compute_primary_caregiver"
+    )
     primary_caregiver_id = fields.Many2one(
         "compassion.household.member",
         compute="_compute_primary_caregiver",
@@ -78,10 +80,12 @@ class Household(models.Model):
     def _compute_siblings(self):
         for household in self:
             brothers = household.member_ids.filtered(
-                lambda member: member.role in ("Brother", "Beneficiary - Male")
+                lambda member: member.role
+                in ("Brother", "Beneficiary - Male", "Participant - Male")
             )
             sisters = household.member_ids.filtered(
-                lambda member: member.role in ("Sister", "Beneficiary - Female")
+                lambda member: member.role
+                in ("Sister", "Beneficiary - Female", "Participant - Female")
             )
             household.nb_brothers = (
                 len(brothers) - 1
@@ -116,13 +120,19 @@ class Household(models.Model):
         return caregiver.translate("role")
 
     def get_caregivers(self):
-        """ Returns valid names for caregivers. """
+        """Returns valid names for caregivers."""
         self.ensure_one()
         caregivers = self.member_ids.filtered(
             lambda member: member.is_caregiver
             and member.role
-            not in ("Brother", "Sister", "Beneficiary - Male",
-                    "Beneficiary - Female")
+            not in (
+                "Brother",
+                "Sister",
+                "Beneficiary - Male",
+                "Beneficiary - Female",
+                "Participant - Male",
+                "Participant - " "Female",
+            )
         )
         return caregivers
 
@@ -137,69 +147,69 @@ class Household(models.Model):
     @api.model
     def _get_jobs(self):
         return [
-            ("Agriculture / Farmer", "Farmer"),
-            ("Agriculture/ Farmer", "Farmer"),
-            ("Farmer", "Farmer"),
-            ("Church Worker / Project Worker", "Project worker"),
-            ("Church Worker", "Project worker"),
-            ("Church Employee/ Project Worker", "Project worker"),
-            ("Construction Worker", "Construction worker"),
-            ("Construction / Tradesman", "Construction worker"),
-            ("Construction/ Tradesman", "Construction worker"),
-            ("Clothing Trade", "Works in clothing trade"),
-            ("Clothing Trades", "Works in clothing trade"),
-            ("Day Labor / Different Jobs", "Daily jobs"),
-            ("Day Labor/ Different Jobs", "Daily jobs"),
-            ("Food Vendor", "Food vendor"),
-            ("Food Services", "Food vendor"),
-            ("Guard / Watchman", "Guard"),
-            ("Security / Guard", "Guard"),
-            ("Security/ Guard", "Guard"),
-            ("Hairdresser", "Hairdresser"),
-            ("Hairdresser/ Manicurist", "Hairdresser"),
-            ("Merchant / Seller", "Merchant"),
-            ("Merchant/ Seller", "Merchant"),
-            ("Sells In Market", "Merchant"),
-            ("Transportation / Driver", "Driver"),
-            ("Transportation/ Driver", "Driver"),
-            ("Domestic Service / Housekeeper", "Housekeeper"),
-            ("Domestic Service/ Housekeeper", "Housekeeper"),
-            ("Laundry Worker", "Laundry worker"),
-            ("Laundress", "Laundry worker"),
-            ("Baker", "Baker"),
-            ("Carpenter", "Carpenter"),
-            ("Cook", "Cook"),
-            ("Electrician", "Electrician"),
-            ("Factory Worker", "Factory worker"),
-            ("Fish Seller", "Fish seller"),
-            ("Fisher", "Fisher"),
-            ("Gardener", "Gardener"),
-            ("Laborer", "Laborer"),
-            ("Housewife", "Housewife"),
-            ("Health Care Worker", "Health care worker"),
-            ("Homemaker", "Homemaker"),
-            ("Janitor", "Janitor"),
-            ("Knitter / Weaver", "Knitter"),
-            ("Law Enforcement", "Law enforcement"),
-            ("Manicurist", "Manicurist"),
-            ("Mason / Bricklayer", "Mason"),
-            ("Mechanic", "Mechanic"),
-            ("Nurse", "Nurse"),
-            ("Other", "Other"),
-            ("Painter", "Painter"),
-            ("Plumber", "Plumber"),
-            ("Tailor / Seamstress", "Tailor"),
-            ("Teacher", "Teacher"),
-            ("Unknown", "Unknown"),
-            ("Waiter / Food Server", "Food server"),
-            ("Welder", "Welder"),
+            ("Agriculture / Farmer", _("Farmer")),
+            ("Agriculture/ Farmer", _("Farmer")),
+            ("Farmer", _("Farmer")),
+            ("Church Worker / Project Worker", _("Project worker")),
+            ("Church Worker", _("Project worker")),
+            ("Church Employee/ Project Worker", _("Project worker")),
+            ("Construction Worker", _("Construction worker")),
+            ("Construction / Tradesman", _("Construction worker")),
+            ("Construction/ Tradesman", _("Construction worker")),
+            ("Clothing Trade", _("Works in clothing trade")),
+            ("Clothing Trades", _("Works in clothing trade")),
+            ("Day Labor / Different Jobs", _("Daily jobs")),
+            ("Day Labor/ Different Jobs", _("Daily jobs")),
+            ("Food Vendor", _("Food vendor")),
+            ("Food Services", _("Food vendor")),
+            ("Guard / Watchman", _("Guard")),
+            ("Security / Guard", _("Guard")),
+            ("Security/ Guard", _("Guard")),
+            ("Hairdresser", _("Hairdresser")),
+            ("Hairdresser/ Manicurist", _("Hairdresser")),
+            ("Merchant / Seller", _("Merchant")),
+            ("Merchant/ Seller", _("Merchant")),
+            ("Sells In Market", _("Merchant")),
+            ("Transportation / Driver", _("Driver")),
+            ("Transportation/ Driver", _("Driver")),
+            ("Domestic Service / Housekeeper", _("Housekeeper")),
+            ("Domestic Service/ Housekeeper", _("Housekeeper")),
+            ("Laundry Worker", _("Laundry worker")),
+            ("Laundress", _("Laundry worker")),
+            ("Baker", _("Baker")),
+            ("Carpenter", _("Carpenter")),
+            ("Cook", _("Cook")),
+            ("Electrician", _("Electrician")),
+            ("Factory Worker", _("Factory worker")),
+            ("Fish Seller", _("Fish seller")),
+            ("Fisher", _("Fisher")),
+            ("Gardener", _("Gardener")),
+            ("Laborer", _("Laborer")),
+            ("Housewife", _("Housewife")),
+            ("Health Care Worker", _("Health care worker")),
+            ("Homemaker", _("Homemaker")),
+            ("Janitor", _("Janitor")),
+            ("Knitter / Weaver", _("Knitter")),
+            ("Law Enforcement", _("Law enforcement")),
+            ("Manicurist", _("Manicurist")),
+            ("Mason / Bricklayer", _("Mason")),
+            ("Mechanic", _("Mechanic")),
+            ("Nurse", _("Nurse")),
+            ("Other", _("Other")),
+            ("Painter", _("Painter")),
+            ("Plumber", _("Plumber")),
+            ("Tailor / Seamstress", _("Tailor")),
+            ("Teacher", _("Teacher")),
+            ("Unknown", _("Unknown")),
+            ("Waiter / Food Server", _("Food server")),
+            ("Welder", _("Welder")),
         ]
 
     def process_commkit(self, commkit_data):
-        """ Household Major Revision """
+        """Household Major Revision"""
         household_ids = list()
         for household_data in commkit_data.get(
-                "BeneficiaryHouseholdList", [commkit_data]
+            "BeneficiaryHouseholdList", [commkit_data]
         ):
             household = self.search(
                 [("household_id", "=", household_data.get("Household_ID"))]
@@ -208,8 +218,9 @@ class Household(models.Model):
                 household_ids.append(household.id)
                 household_vals = self.json_to_data(household_data)
                 # First write revision values
-                household.write({
-                    "revised_value_ids": household_vals.pop("revised_value_ids")})
+                household.write(
+                    {"revised_value_ids": household_vals.pop("revised_value_ids")}
+                )
                 household.write(household_vals)
         return household_ids
 
@@ -271,7 +282,8 @@ class HouseholdMembers(models.Model):
             ("Stepfather", _("step father")),
             ("Godfather", _("godfather")),
             ("Brother", _("brother")),
-            ("Beneficiary - Male", "Beneficiary - Male"),
+            ("Beneficiary - Male", "Participant - Male"),
+            ("Participant - Male", "Participant - Male"),
         ]
 
     @api.model
@@ -284,7 +296,8 @@ class HouseholdMembers(models.Model):
             ("Stepmother", _("step mother")),
             ("Godmother", _("godmother")),
             ("Sister", _("sister")),
-            ("Beneficiary - Female", "Beneficiary - Female"),
+            ("Beneficiary - Female", "Participant - Female"),
+            ("Beneficiary - Female", "Participant - Female"),
         ]
 
     @api.model
@@ -292,9 +305,10 @@ class HouseholdMembers(models.Model):
         return [
             ("Foster parent", _("foster parent")),
             ("Friend", _("friend")),
-            ("Other non-relative", "Other non-relative"),
-            ("Other relative", "Other relative"),
-            ("Beneficiary – Unborn", "Beneficiary - Unborn"),
+            ("Other non-relative", _("Other non-relative")),
+            ("Other relative", _("Other relative")),
+            ("Beneficiary – Unborn", _("Beneficiary - Unborn")),
+            ("Participant – Unborn", _("Participant - Unborn")),
         ]
 
     @api.depends("role")

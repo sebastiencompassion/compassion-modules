@@ -3,7 +3,7 @@
   "model": "correspondence",
   "mapping": {
     "Beneficiary": {
-      "field" : "child_id",
+      "field": "child_id.id",
       "sub_mapping": {
         "name": "Beneficiary Correspondence",
         "model": "compassion.child",
@@ -40,9 +40,9 @@
     },
     "GlobalPartner": {
       "to_json_conversion": "self.env.user.company_id.country_id.code"
-      },
+    },
     "Pages": {
-      "field": "page_ids",
+      "field": "page_ids.id",
       "sub_mapping": "Correspondence Page"
     },
     "Direction": {
@@ -63,7 +63,7 @@
     "SBCTypes": {
       "field": "communication_type_ids.name",
       "search_relational_record": true,
-      "relational_raise_if_not_found": false
+      "allow_relational_creation": false
     },
     "CompassionSBCId": {
       "field": "kit_identifier"
@@ -128,7 +128,7 @@
       "search_relational_record": true
     },
     "Supporter": {
-      "field": "partner_id",
+      "field": "partner_id.id",
       "sub_mapping": {
         "name": "Supporter mapping",
         "model": "res.partner",
@@ -149,7 +149,10 @@
             "field": null
           }
         }
-      }
+      },
+      "search_relational_record": true,
+      "allow_relational_creation": false,
+      "search_key": "global_id"
     },
     "SourceSystem": {
       "to_json_conversion": "'Odoo'"

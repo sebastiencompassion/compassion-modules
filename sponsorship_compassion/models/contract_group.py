@@ -8,13 +8,9 @@
 #
 ##############################################################################
 
-import logging
-from datetime import datetime
+from odoo import fields, models
 
-from odoo import api, fields, models
-from .product_names import GIFT_REF
-
-logger = logging.getLogger(__name__)
+from .product_names import BIRTHDAY_GIFT, CHRISTMAS_GIFT
 
 
 class ContractGroup(models.Model):
@@ -23,7 +19,6 @@ class ContractGroup(models.Model):
     ##########################################################################
     #                                 FIELDS                                 #
     ##########################################################################
-
     contains_sponsorship = fields.Boolean(
         string="Contains sponsorship",
         compute="_compute_contains_sponsorship",
@@ -31,7 +26,6 @@ class ContractGroup(models.Model):
         default=lambda s: s.env.context.get("default_type", None)
         and "S" in s.env.context.get("default_type", "O"),
     )
-    change_method = fields.Selection(default="clean_invoices")
 
     ##########################################################################
     #                             FIELDS METHODS                             #
@@ -40,88 +34,32 @@ class ContractGroup(models.Model):
     def _compute_contains_sponsorship(self):
         for group in self:
             group.contains_sponsorship = group.mapped("contract_ids").filtered(
-                lambda s: s.type in ("S", "SC", "SWP") and s.state not in (
-                    "terminated", "cancelled")
+                lambda s: s.type in ("S", "SC", "SWP")
+                and s.state not in ("terminated", "cancelled")
             )
 
-    ##########################################################################
-    #                             PRIVATE METHODS                            #
-    ##########################################################################
-    def _generate_invoices(self, invoicer=None, **kwargs):
-        """ Add birthday gifts generation. """
-        invoicer = self._generate_birthday_gifts(invoicer)
-        invoicer = super()._generate_invoices(invoicer, **kwargs)
-        return invoicer
+    def _generate_invoices(self, invoicer):
+        # Exclude gifts from regular generation
+        super(
+            ContractGroup, self.with_context(open_invoices_sponsorship_only=True)
+        )._generate_invoices(invoicer)
+        # We don't generate gift if the contract isn't active
+        contracts = self.mapped("contract_ids").filtered(lambda c: c.state == "active")
+        contracts._generate_gifts(invoicer, BIRTHDAY_GIFT)
+        contracts._generate_gifts(invoicer, CHRISTMAS_GIFT)
+        return True
 
-    def _generate_birthday_gifts(self, invoicer=None):
-        """ Creates the annual birthday gift for sponsorships that
-        have set the option for automatic birthday gift creation. """
-        logger.debug("Automatic Birthday Gift Generation Started.")
-
-        if invoicer is None:
-            invoicer = (
-                self.env["recurring.invoicer"].with_context(lang="en_US").create({})
-            )
-
-        # Search active Sponsorships with automatic birthday gift
-        gen_states = self._get_gen_states()
-        contract_search = [("birthday_invoice", ">", 0.0), ("state", "in", gen_states)]
-        if self.ids:
-            contract_search.append(("group_id", "in", self.ids))
-        contract_obj = self.env["recurring.contract"]
-        contracts = contract_obj.search(contract_search)
-
-        # Exclude sponsorship if a gift is already open
-        invl_obj = self.env["account.move.line"]
-        product_id = (
-            self.env["product.product"]
-                .with_company(contracts.company_id.id)
-                .search([("default_code", "=", GIFT_REF[0])], limit=1)
-                .id
-        )
-
-        for contract in contracts:
-            invl_ids = invl_obj.search(
-                [
-                    ("state", "=", "posted"),
-                    ("contract_id", "=", contract.id),
-                    ("product_id", "=", product_id),
-                ]
-            )
-            if contract.project_id.hold_gifts or invl_ids:
-                contracts -= contract
-
-        if contracts:
-            total = str(len(contracts))
-            count = 1
-            logger.debug(f"Found {total} Birthday Gifts to generate.")
-
-            gift_wizard = (
-                self.env["generate.gift.wizard"]
-                    .with_context(recurring_invoicer_id=invoicer.id)
-                    .create(
-                    {
-                        "description": "Automatic birthday gift",
-                        "invoice_date": datetime.today().date(),
-                        "product_id": product_id,
-                        "amount": 0.0,
-                    }
-                )
-            )
-
-            # Generate invoices
-            for contract in contracts:
-                logger.debug(f"Birthday Gift Generation: {count}/{total} ")
-                try:
-                    self._generate_birthday_gift(gift_wizard, contract)
-                except:
-                    logger.error("Gift generation failed")
-                finally:
-                    count += 1
-
-        logger.debug("Automatic Birthday Gift Generation Finished !!")
-        return invoicer
-
-    def _generate_birthday_gift(self, gift_wizard, contract):
-        gift_wizard.write({"amount": contract.birthday_invoice})
-        gift_wizard.with_context(active_ids=contract.id).generate_invoice()
+    def build_inv_line_data(
+        self, invoicing_date=False, gift_wizard=False, contract_line=False
+    ):
+        # Push analytic account
+        res = super().build_inv_line_data(invoicing_date, gift_wizard, contract_line)
+        if gift_wizard:
+            res[
+                "analytic_account_id"
+            ] = gift_wizard.contract_id.origin_id.analytic_id.id
+        elif contract_line:
+            res[
+                "analytic_account_id"
+            ] = contract_line.contract_id.origin_id.analytic_id.id
+        return res

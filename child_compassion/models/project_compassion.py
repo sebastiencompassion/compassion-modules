@@ -13,26 +13,32 @@ import re
 from datetime import datetime, timedelta
 
 import requests
-from odoo.addons.message_center_compassion.tools.onramp_connector import OnrampConnector
 
-from odoo import models, fields, api, tools, _
+from odoo import _, api, fields, models, tools
 from odoo.exceptions import UserError
+
+from odoo.addons.message_center_compassion.tools.onramp_connector import OnrampConnector
 
 logger = logging.getLogger(__name__)
 
 try:
-    from timezonefinder import TimezoneFinder
     from pytz import timezone
-except (ImportError, IOError) as err:
+    from timezonefinder import TimezoneFinder
+except (OSError, ImportError):
     logger.warning("Please install timezonefinder and pytz")
 
 
 class CompassionProject(models.Model):
-    """ A compassion project """
+    """A compassion project"""
 
     _name = "compassion.project"
     _rec_name = "fcp_id"
-    _inherit = ["mail.thread", "translatable.model", "compassion.mapped.model"]
+    _inherit = [
+        "mail.thread",
+        "mail.activity.mixin",
+        "translatable.model",
+        "compassion.mapped.model",
+    ]
     _description = "Frontline Church Partner"
 
     ##########################################################################
@@ -79,7 +85,7 @@ class CompassionProject(models.Model):
     territory = fields.Char(readonly=True)
     field_office_id = fields.Many2one(
         "compassion.field.office",
-        "Field Office",
+        "National Office",
         compute="_compute_field_office",
         store=True,
         readonly=False,
@@ -99,19 +105,31 @@ class CompassionProject(models.Model):
     number_church_members = fields.Integer(readonly=True)
     weekly_child_attendance = fields.Integer(readonly=True)
     implemented_program_ids = fields.Many2many(
-        "fcp.program", "fcp_implemented_programs", "fcp_id", "program_id",
-        string="Programs implemented", readonly=True
+        "fcp.program",
+        "fcp_implemented_programs",
+        "fcp_id",
+        "program_id",
+        string="Programs implemented",
+        readonly=True,
     )
     interested_program_ids = fields.Many2many(
-        "fcp.program", "fcp_interested_programs", "fcp_id", "program_id",
-        string="Programs of interest", readonly=True
+        "fcp.program",
+        "fcp_interested_programs",
+        "fcp_id",
+        "program_id",
+        string="Programs of interest",
+        readonly=True,
     )
 
     # Church infrastructure information
     ###################################
     church_building_size = fields.Float(help="Unit is square meters", readonly=True)
     church_ownership = fields.Selection(
-        [("Rented", "Rented"), ("Owned", "Owned"), ], readonly=True
+        [
+            ("Rented", "Rented"),
+            ("Owned", "Owned"),
+        ],
+        readonly=True,
     )
     facility_ids = fields.Many2many(
         "fcp.church.facility", string="Church facilities", readonly=True
@@ -253,7 +271,7 @@ class CompassionProject(models.Model):
     time_to_medical_facility = fields.Char(readonly=True)
     community_locale = fields.Char(readonly=True)
     community_climate = fields.Char(readonly=True)
-    community_terrain = fields.Char(readonly=True)
+    community_terrain = fields.Char(readonly=True, translate=True)
     typical_roof_material = fields.Selection("_get_materials", readonly=True)
     typical_floor_material = fields.Selection("_get_materials", readonly=True)
     typical_wall_material = fields.Selection("_get_materials", readonly=True)
@@ -322,7 +340,7 @@ class CompassionProject(models.Model):
 
     # Partnership
     #############
-    partnership_start_date = fields.Date( readonly=True)
+    partnership_start_date = fields.Date(readonly=True)
     program_start_date = fields.Date(readonly=True)
     program_end_date = fields.Date(readonly=True)
 
@@ -338,51 +356,112 @@ class CompassionProject(models.Model):
     )
     covid_status_ids = fields.One2many(
         "compassion.project.covid_update",
-        "fcp_id", "FCP Re-opening Status", readonly=True
+        "fcp_id",
+        "FCP Re-opening Status",
+        readonly=True,
     )
 
     suspension = fields.Selection(
         [("suspended", "Suspended"), ("fund-suspended", "Suspended & fund retained")],
         "Suspension",
-        compute="_compute_suspension_state",
+        compute="_compute_suspension",
         store=True,
         tracking=True,
     )
     status = fields.Selection(
-        [
-            ("A", _("Active")),
-            ("P", _("Phase-out")),
-            ("T", _("Terminated")),
-            ("S", _("Suspended")),
-        ],
+        "_status_selection",
         tracking=True,
-        default="A",
-        readonly=True,
+        compute="_compute_suspension",
+        store=True,
     )
     last_reviewed_date = fields.Date(
         "Last reviewed date",
         tracking=True,
         readonly=True,
     )
-    status_comment = fields.Text(related="lifecycle_ids.details", store=True)
-    hold_cdsp_funds = fields.Boolean(related="lifecycle_ids.hold_cdsp_funds")
-    hold_csp_funds = fields.Boolean(related="lifecycle_ids.hold_csp_funds")
-    hold_gifts = fields.Boolean(related="lifecycle_ids.hold_gifts")
-    hold_s2b_letters = fields.Boolean(related="lifecycle_ids.hold_s2b_letters")
-    hold_b2s_letters = fields.Boolean(related="lifecycle_ids.hold_b2s_letters")
+    last_lifecycle_id = fields.Many2one(
+        "compassion.project.ile", compute="_compute_last_lifecycle"
+    )
+    status_comment = fields.Text(related="last_lifecycle_id.details")
+    hold_cdsp_funds = fields.Boolean(related="last_lifecycle_id.hold_cdsp_funds")
+    hold_csp_funds = fields.Boolean(related="last_lifecycle_id.hold_csp_funds")
+    hold_gifts = fields.Boolean(related="last_lifecycle_id.hold_gifts")
+    hold_s2b_letters = fields.Boolean(related="last_lifecycle_id.hold_s2b_letters")
+    hold_b2s_letters = fields.Boolean(related="last_lifecycle_id.hold_b2s_letters")
 
     # Project Descriptions
     ######################
-    description_en = fields.Text("English description", readonly=True)
+    description_en = fields.Html("English description", readonly=True)
+    description_left = fields.Html(compute="_compute_description")
+    description_right = fields.Html(compute="_compute_description")
 
-    re_opening_status = fields.Char(compute="_compute_re_opening_state",
-                                    store=True,
-                                    tracking=True,
-                                    )
+    re_opening_status = fields.Char(
+        compute="_compute_re_opening_state",
+        store=True,
+        tracking=True,
+    )
+
+    @api.model
+    def _status_selection(self):
+        return self.env["compassion.project.ile"]._get_project_status()
+
+    @property
+    def translated_fields(self):
+        return [
+            "involvement_ids.value",
+            "ministry_ids.value",
+            "implemented_program_ids.value",
+            "interested_program_ids.value",
+            "facility_ids.value",
+            "mobile_device_ids.value",
+            "utility_ids.value",
+            "spiritual_activity_babies_ids.value",
+            "spiritual_activity_kids_ids.value",
+            "spiritual_activity_ados_ids.value",
+            "cognitive_activity_babies_ids.value",
+            "cognitive_activity_kids_ids.value",
+            "cognitive_activity_ados_ids.value",
+            "physical_activity_babies_ids.value",
+            "physical_activity_kids_ids.value",
+            "physical_activity_ados_ids.value",
+            "socio_activity_babies_ids.value",
+            "socio_activity_kids_ids.value",
+            "socio_activity_ados_ids.value",
+            "primary_adults_occupation_ids.value",
+            "school_cost_paid_ids.value",
+            "rainy_month_ids.name",
+            "planting_month_ids.name",
+            "harvest_month_ids.name",
+            "hunger_month_ids.name",
+            "primary_diet_ids.value",
+            "preferred_lang_id.name",
+            "primary_language_id.name",
+            "church_ownership",
+            "electrical_power",
+            "school_year_begins",
+            "typical_roof_material",
+            "typical_floor_material",
+            "typical_wall_material",
+            "coolest_month",
+            "warmest_month",
+            "current_weather",
+            "first_scheduled_letter",
+            "second_scheduled_letter",
+            "community_terrain",
+        ]
 
     ##########################################################################
     #                             FIELDS METHODS                             #
     ##########################################################################
+    def _compute_description(self):
+        lang_map = self.env["compassion.project.description"]._supported_languages()
+
+        for project in self:
+            lang = self.env.lang or "en_US"
+            description = getattr(project, lang_map.get(lang), "")
+            project.description_right = description
+            project.description_left = False
+
     @api.depends("fcp_id")
     def _compute_field_office(self):
         fo_obj = self.env["compassion.field.office"]
@@ -394,15 +473,27 @@ class CompassionProject(models.Model):
     def _get_months(self):
         return self.env["connect.month"].get_months_selection()
 
-    @api.depends("lifecycle_ids")
-    def _compute_suspension_state(self):
-        for project in self.filtered("lifecycle_ids"):
-            last_info = project.lifecycle_ids[0]
-            if last_info.type == "Suspension":
+    @api.depends("lifecycle_ids", "lifecycle_ids.date")
+    def _compute_last_lifecycle(self):
+        for project in self:
+            last_info = project.lifecycle_ids[:1]
+            reactivation_lifecycle = project.lifecycle_ids.filtered(
+                lambda r, _last=last_info: r.date == _last.date
+                and r.type == "Reactivation"
+            )[:1]
+            # If it exists, lifecycle with type 'Reactivation' is determinant
+            project.last_lifecycle_id = reactivation_lifecycle or last_info
+
+    @api.depends("lifecycle_ids", "lifecycle_ids.write_date")
+    def _compute_suspension(self):
+        for project in self:
+            last_lifecycle = project.last_lifecycle_id
+            project.status = last_lifecycle.project_status
+            if last_lifecycle.type == "Suspension":
                 project.suspension = (
-                    "fund-suspended" if last_info.hold_cdsp_funds else "suspended"
+                    "fund-suspended" if last_lifecycle.hold_cdsp_funds else "suspended"
                 )
-            elif last_info.type == "Reactivation":
+            else:
                 project.suspension = False
 
     @api.depends("covid_status_ids")
@@ -457,7 +548,7 @@ class CompassionProject(models.Model):
     ##########################################################################
     @api.model
     def create(self, vals_list):
-        """ Avoid creating an already existing FCP. """
+        """Avoid creating an already existing FCP."""
         if isinstance(vals_list, dict):
             vals_list = [vals_list]
 
@@ -475,14 +566,14 @@ class CompassionProject(models.Model):
     #                             PUBLIC METHODS                             #
     ##########################################################################
     def suspend_funds(self):
-        """ Hook to perform some action when project is suspended.
+        """Hook to perform some action when project is suspended.
         By default: log a message.
         """
         for project in self:
             project.message_post(
                 body=_("The project was suspended."),
                 subject=_("Project Suspended"),
-                message_type="comment",
+                subtype_xmlid="mail.mt_comment",
             )
         return True
 
@@ -509,8 +600,7 @@ class CompassionProject(models.Model):
         """
         for project in self:
             if not project.last_weather_refresh_date or (
-                    datetime.now() - project.last_weather_refresh_date >
-                    timedelta(hours=1)
+                datetime.now() - project.last_weather_refresh_date > timedelta(hours=1)
             ):
                 json = requests.get(
                     "https://api.openweathermap.org/data/2.5/weather"
@@ -537,7 +627,7 @@ class CompassionProject(models.Model):
         return all_activities[:max_int].mapped("value")
 
     def details_answer(self, vals):
-        """ Called when receiving the answer of GetDetails message. """
+        """Called when receiving the answer of GetDetails message."""
         self.ensure_one()
         vals["last_update_date"] = fields.Date.today()
         self.write(vals)
@@ -546,7 +636,7 @@ class CompassionProject(models.Model):
 
     @api.model
     def new_kit(self, commkit_data):
-        """ New project kit is received. """
+        """New project kit is received."""
         projects = self
         for project_data in commkit_data.get("ICPResponseList", [commkit_data]):
             fcp_id = project_data.get("ICP_ID")
@@ -561,26 +651,6 @@ class CompassionProject(models.Model):
 
     def json_to_data(self, json, mapping_name=None):
         odoo_data = super().json_to_data(json, mapping_name)
-        status = odoo_data.get("status")
-        if status:
-            status_mapping = {
-                "Active": "A",
-                "Phase Out": "P",
-                "Suspended": "S",
-                "Transitioned": "T",
-            }
-            odoo_data["status"] = status_mapping[status]
-
-        for key, val in odoo_data.items():
-            if isinstance(val, str) and val.lower() in (
-                    "null",
-                    "false",
-                    "none",
-                    "other",
-                    "unknown",
-            ):
-                odoo_data[key] = False
-
         monthly_income = odoo_data.get("monthly_income")
         if monthly_income:
             monthly_income = monthly_income.replace(",", "")
@@ -596,26 +666,48 @@ class CompassionProject(models.Model):
                 del odoo_data["monthly_income"]
         return odoo_data
 
+    def fetch_translations(self):
+        """
+        Contact GMC service in all installed languages in order to fetch all terms
+        used in child description.
+        """
+        self._fetch_translations(self.env.ref("child_compassion.icp_details"))
+        return self.edit_translations()
+
     ##########################################################################
     #                             VIEW CALLBACKS                             #
     ##########################################################################
     def update_informations(self):
-        """ Get the most recent informations for selected projects and update
-            them accordingly. """
+        """Get the most recent informations for selected projects and update
+        them accordingly."""
         message_obj = self.env["gmc.message"]
         action_id = self.env.ref("child_compassion.icp_details").id
-        message_vals = {
-            "action_id": action_id,
-            "object_id": self.id,
-        }
-        message = message_obj.create(message_vals)
+        for project in self:
+            message_vals = {
+                "action_id": action_id,
+                "object_id": project.id,
+            }
+            message = message_obj.create(message_vals)
+            if "failure" in message.state and not self.env.context.get("async_mode"):
+                raise UserError(message.failure_reason)
+
+        return True
+
+    def get_all_projects(self):
+        message_obj = self.env["gmc.message"]
+        action_id = self.env.ref("child_compassion.icp_search_request").id
+        message = message_obj.create(
+            {
+                "action_id": action_id,
+            }
+        )
         if "failure" in message.state:
             raise UserError(message.failure_reason)
 
         return True
 
     def get_lifecycle_event(self):
-        onramp = OnrampConnector()
+        onramp = OnrampConnector(self.env)
         endpoint = "churchpartners/{}/kits/icplifecycleeventkit"
         lifecylcle_ids = list()
         for project in self:
@@ -632,12 +724,12 @@ class CompassionProject(models.Model):
     #                             PRIVATE METHODS                            #
     ##########################################################################
     def reactivate_project(self):
-        """ To perform some actions when project is reactivated """
+        """To perform some actions when project is reactivated"""
         for project in self:
             project.message_post(
                 body=_("The project is reactivated."),
                 subject=_("Project Reactivation"),
-                message_type="comment",
+                subtype_xmlid="mail.mt_comment",
             )
         return True
 

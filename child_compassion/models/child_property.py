@@ -1,6 +1,6 @@
 ##############################################################################
 #
-#    Copyright (C) 2016 Compassion CH (http://www.compassion.ch)
+#    Copyright (C) 2016-2022 Compassion CH (http://www.compassion.ch)
 #    Releasing children from poverty in Jesus' name
 #    @author: Emanuel Cino <ecino@compassion.ch>
 #
@@ -9,16 +9,17 @@
 ##############################################################################
 
 
-from odoo import models, fields
+from odoo import fields, models
 
 
 class ChildProperty(models.AbstractModel):
-    """ A child property is a class linked to children to describe
-    the child hobbies/activities/etc... in several languages. """
+    """A child property is a class linked to children to describe
+    the child hobbies/activities/etc... in several languages."""
 
     _name = "child.property"
     _inherit = "connect.multipicklist"
     _description = "Child Property"
+    _rec_name = "value"
 
     res_model = "compassion.child"
     value = fields.Char(translate=True)

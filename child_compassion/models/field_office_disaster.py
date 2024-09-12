@@ -8,7 +8,7 @@
 #
 ##############################################################################
 
-from odoo import api, models, fields, _
+from odoo import _, api, fields, models
 
 
 class ICPDisasterImpact(models.Model):
@@ -18,8 +18,11 @@ class ICPDisasterImpact(models.Model):
     _order = "id desc"
 
     project_id = fields.Many2one(
-        "compassion.project", "Project", compute="_compute_project", store=True,
-        readonly=True
+        "compassion.project",
+        "Project",
+        compute="_compute_project",
+        store=True,
+        readonly=True,
     )
     disaster_id = fields.Many2one(
         "fo.disaster.alert", "Disaster Alert", ondelete="cascade", readonly=False
@@ -34,14 +37,14 @@ class ICPDisasterImpact(models.Model):
     @api.depends("project_fcp_id")
     def _compute_project(self):
         for impact in self:
-            impact.project_id = self.env["compassion.project"].search([
-                ("fcp_id", "=", impact.project_fcp_id)
-            ], limit=1)
+            impact.project_id = self.env["compassion.project"].search(
+                [("fcp_id", "=", impact.project_fcp_id)], limit=1
+            )
 
 
 class FieldOfficeDisasterUpdate(models.Model):
     _name = "fo.disaster.update"
-    _description = "Field Office Disaster Update"
+    _description = "National Office Disaster Update"
     _order = "id desc"
     _inherit = "compassion.mapped.model"
 
@@ -49,7 +52,7 @@ class FieldOfficeDisasterUpdate(models.Model):
         "fo.disaster.alert", "Disaster Alert", ondelete="cascade", readonly=False
     )
     fo_id = fields.Many2one(
-        "compassion.field.office", "Field Office", ondelete="cascade", readonly=False
+        "compassion.field.office", "National Office", ondelete="cascade", readonly=False
     )
 
     fodu_id = fields.Char()
@@ -108,19 +111,18 @@ class ChildDisasterImpact(models.Model):
     @api.depends("child_global_id")
     def _compute_child(self):
         for impact in self:
-            impact.child_id = self.env["compassion.child"].search([
-                ("global_id", "=", impact.child_global_id)
-            ], limit=1)
+            impact.child_id = self.env["compassion.child"].search(
+                [("global_id", "=", impact.child_global_id)], limit=1
+            )
 
     @api.model
     def create(self, vals):
-        """ Log a note in child when new disaster impact is registered. """
+        """Log a note in child when new disaster impact is registered."""
         impact = super().create(vals)
         if impact.child_id:
             impact.child_id.message_post(
-                body=_(
-                    "Child was affected by the natural disaster %s"
-                ) % impact.disaster_id.name,
+                body=_("Child was affected by the natural disaster %s")
+                % impact.disaster_id.name,
                 subject=_("Disaster Alert"),
             )
         return impact
@@ -129,14 +131,14 @@ class ChildDisasterImpact(models.Model):
 class DisasterLoss(models.Model):
     _inherit = "connect.multipicklist"
     _name = "fo.disaster.loss"
-    _description = "Field office disaster loss"
+    _description = "National office disaster loss"
     res_model = "child.disaster.impact"
     res_field = "loss_ids"
 
 
 class FieldOfficeDisasterAlert(models.Model):
     _name = "fo.disaster.alert"
-    _description = "Field Office Disaster Alert"
+    _description = "National Office Disaster Alert"
     _inherit = ["mail.thread", "compassion.mapped.model"]
     _order = "disaster_date desc, id desc"
 
@@ -192,7 +194,7 @@ class FieldOfficeDisasterAlert(models.Model):
 
     field_office_id = fields.Many2one(
         "compassion.field.office",
-        string="Field Offices",
+        string="National Offices",
         ondelete="cascade",
         readonly=False,
     )
@@ -200,7 +202,7 @@ class FieldOfficeDisasterAlert(models.Model):
     field_office_impact_description = fields.Char()
 
     impact_description = fields.Char()
-    impact_on_fcp_infrastructure_damaged = fields.Integer(    )
+    impact_on_fcp_infrastructure_damaged = fields.Integer()
     impact_on_fcp_infrastructure_destroyed = fields.Integer()
     impact_on_fcp_program_temporarily_closed = fields.Integer()
     impact_to_field_office_operations = fields.Char()
@@ -226,7 +228,7 @@ class FieldOfficeDisasterAlert(models.Model):
         "fcp.disaster.impact", "disaster_id", "FCP Disaster Impact", readonly=False
     )
     fo_disaster_update_ids = fields.One2many(
-        "fo.disaster.update", "disaster_id", "Field Office Update", readonly=False
+        "fo.disaster.update", "disaster_id", "National Office Update", readonly=False
     )
     child_disaster_impact_ids = fields.One2many(
         "child.disaster.impact", "disaster_id", "Child Disaster Impact", readonly=False
@@ -255,7 +257,7 @@ class FieldOfficeDisasterAlert(models.Model):
     ##########################################################################
     @api.model
     def create(self, vals):
-        """ Update if disaster already exists. """
+        """Update if disaster already exists."""
         disaster_id = vals.get("disaster_id")
         disaster = self.search([("disaster_id", "=", disaster_id)])
         # Notify users
@@ -269,9 +271,7 @@ class FieldOfficeDisasterAlert(models.Model):
                     body=_("The Disaster Alert was just updated."),
                     subject=_("Disaster Alert Update"),
                     partner_ids=notify_ids,
-                    type="comment",
-                    subtype="mail.mt_comment",
-                    content_subtype="plaintext",
+                    subtype_xmlid="mail.mt_comment",
                 )
         else:
             disaster = super().create(vals)
@@ -280,9 +280,7 @@ class FieldOfficeDisasterAlert(models.Model):
                     body=_("The disaster alert has just been received."),
                     subject=_("New Disaster Alert"),
                     partner_ids=notify_ids,
-                    type="comment",
-                    subtype="mail.mt_comment",
-                    content_subtype="plaintext",
+                    subtype_xmlid="mail.mt_comment",
                 )
         return disaster
 
@@ -320,14 +318,13 @@ class FieldOfficeDisasterAlert(models.Model):
     ##########################################################################
     @api.model
     def simulate_details(self, commkit_data):
-        """ This can be used for simulating the reception of Disaster Alert
+        """This can be used for simulating the reception of Disaster Alert
         with all details already present in the message. You should change the
         field `incoming_method` of the gmc.action `Disaster Alert` to use this
         method."""
         fo_ids = list()
         for single_data in commkit_data.get("DisasterResponseList", [commkit_data]):
-            vals = self.json_to_data(
-                single_data, mapping_name="Disaster Alert")
+            vals = self.json_to_data(single_data, mapping_name="Disaster Alert")
             fo_disaster = self.create(vals)
             fo_ids.append(fo_disaster.id)
         return fo_ids
@@ -339,7 +336,8 @@ class FieldOfficeDisasterAlert(models.Model):
         fo_ids = list()
         for single_data in commkit_data.get("DisasterResponseList", [commkit_data]):
             vals = self.json_to_data(
-                single_data, mapping_name="Disaster Alert Notification")
+                single_data, mapping_name="Disaster Alert Notification"
+            )
             fo_disaster = self.create(vals)
             message_vals = {
                 "action_id": action_id,

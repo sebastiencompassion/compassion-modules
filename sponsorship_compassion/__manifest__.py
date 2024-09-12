@@ -29,17 +29,19 @@
 # pylint: disable=C8101
 {
     "name": "Compassion Sponsorships",
-    "version": "14.0.1.0.0",
-    "category": "Other",
+    "version": "14.0.1.2.2",
+    "category": "Compassion",
     "author": "Compassion CH",
     "license": "AGPL-3",
-    "website": "http://www.compassion.ch",
+    "website": "https://github.com/CompassionCH/compassion-modules",
     "depends": [
         "recurring_contract",  # compassion-accounting
         "utm",
         "crm",
         "child_compassion",
+        "partner_personal_info",
         "web_m2x_options",  # oca/web
+        "web_notify",  # oca/web
         "partner_firstname",  # oca/partner-contact
         "account_analytic_attribution",  # compassion-accounting
         "sale",
@@ -48,7 +50,6 @@
         "views/invoice_line_view.xml",
         "views/res_partner_view.xml",
         "views/sponsorship_contract_view.xml",
-        "views/privacy_statement.xml",
         "views/generate_gift_view.xml",
         "views/account_invoice_split_wizard_view.xml",
         "views/child_view.xml",
@@ -75,9 +76,11 @@
         "views/product_views.xml",
         "views/res_config_settings_view.xml",
     ],
-    "demo": ["demo/demo_data.xml", ],
+    "demo": [
+        "demo/demo_data.xml",
+    ],
     "installable": True,
     "auto_install": False,
-    "development_status": "Stable",
+    "development_status": "Production/Stable",
     "post_init_hook": "load_mappings",
 }

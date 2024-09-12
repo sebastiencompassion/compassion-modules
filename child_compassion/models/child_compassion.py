@@ -9,21 +9,22 @@
 ##############################################################################
 import logging
 import traceback
-from datetime import datetime, date
+from datetime import date, datetime
 
 from dateutil.relativedelta import relativedelta
 
+from odoo import _, api, fields, models
+from odoo.exceptions import UserError, ValidationError
+
 from odoo.addons.message_center_compassion.tools.onramp_connector import OnrampConnector
 
-from odoo import models, fields, api, _
-from odoo.exceptions import UserError, ValidationError
 from .compassion_hold import HoldType
 
 logger = logging.getLogger(__name__)
 
 
 class CompassionChild(models.Model):
-    """ A sponsored child """
+    """A sponsored child"""
 
     _name = "compassion.child"
     _rec_name = "local_id"
@@ -63,7 +64,6 @@ class CompassionChild(models.Model):
         [
             ("W", "Waiting Hold"),
             ("N", "Consigned"),
-            ("I", "On Internet"),
             ("P", "Sponsored"),
             ("F", "Departed"),
             ("R", "Released"),
@@ -72,13 +72,13 @@ class CompassionChild(models.Model):
         required=True,
         tracking=True,
         default="W",
-        index=True
+        index=True,
     )
     is_available = fields.Boolean(compute="_compute_available")
-    sponsor_id = fields.Many2one(
-        "res.partner", "Sponsor", tracking=True, readonly=True
+    sponsor_id = fields.Many2one("res.partner", "Sponsor", tracking=True, readonly=True)
+    partner_id = fields.Many2one(
+        "res.partner", string="Partner", related="sponsor_id", readonly=False
     )
-    partner_id = fields.Many2one("res.partner", string='Partner', related="sponsor_id", readonly=False)
     sponsor_ref = fields.Char("Sponsor reference", related="sponsor_id.ref")
     has_been_sponsored = fields.Boolean()
     exit_reason = fields.Char(compute="_compute_exit_reason")
@@ -91,7 +91,7 @@ class CompassionChild(models.Model):
     # Hold Information
     ##################
     hold_id = fields.Many2one("compassion.hold", "Hold", readonly=True)
-    hold_type = fields.Selection(related="hold_id.type", string='Hold type', store=True)
+    hold_type = fields.Selection(related="hold_id.type", string="Hold type", store=True)
     hold_channel = fields.Selection(related="hold_id.channel", store=True)
     hold_owner = fields.Many2one(
         related="hold_id.primary_owner", store=True, readonly=False
@@ -103,7 +103,7 @@ class CompassionChild(models.Model):
         related="hold_id.expiration_date", string="Hold expiration", store=True
     )
 
-    # Beneficiary Favorites
+    # Participant Favorites
     #######################
     hobby_ids = fields.Many2many("child.hobby", string="Hobbies", readonly=True)
     duty_ids = fields.Many2many(
@@ -113,7 +113,6 @@ class CompassionChild(models.Model):
         "child.project.activity",
         string="Project activities",
         readonly=True,
-
     )
     subject_ids = fields.Many2many(
         "child.school.subject", string="School subjects", readonly=True
@@ -295,7 +294,10 @@ class CompassionChild(models.Model):
 
     # Descriptions
     ##############
-    desc_en = fields.Text("English description", readonly=True)
+    desc_en = fields.Html("English description", readonly=True)
+
+    description_left = fields.Html(compute="_compute_description")
+    description_right = fields.Html(compute="_compute_description")
 
     # Just for migration
     delegated_comment = fields.Text()
@@ -303,11 +305,45 @@ class CompassionChild(models.Model):
     _sql_constraints = [
         ("compass_id", "unique(compass_id)", "The child already exists in database."),
         ("global_id", "unique(global_id)", "The child already exists in database."),
+        (
+            "birthdate",
+            "check(birthdate <= CURRENT_DATE)",
+            "The birthdate can't be in the future",
+        ),
     ]
+
+    @property
+    def translated_fields(self):
+        return [
+            "hobby_ids.value",
+            "christian_activity_ids.value",
+            "project_activity_ids.value",
+            "duty_ids.value",
+            "subject_ids.value",
+            "chronic_illness_ids.value",
+            "physical_disability_ids.value",
+            "correspondence_language_id.name",
+            "education_level",
+            "vocational_training_type",
+            "academic_performance",
+            "major_course_study",
+            "gender",
+            "household_id.member_ids.role",
+        ]
 
     ##########################################################################
     #                             FIELDS METHODS                             #
     ##########################################################################
+    def _compute_description(self):
+        lang_map = self.env["compassion.child.description"]._supported_languages()
+
+        for child in self:
+            lang = self.env.lang or "en_US"
+            description = getattr(child, lang_map.get(lang), "")
+            child.description_left = description
+            child.description_right = (
+                False  # Could be used to split the description inside the childpack
+            )
 
     def _compute_available(self):
         for child in self:
@@ -315,12 +351,12 @@ class CompassionChild(models.Model):
 
     @api.model
     def _available_states(self):
-        return ["N", "I"]
+        return ["N"]
 
     def _compute_exit_reason(self):
         for child in self:
             exit_details = child.lifecycle_ids.with_context(lang="en_US").filtered(
-                lambda l: l.type in ("Planned Exit", "Unplanned Exit")
+                lambda lifecycle: lifecycle.type in ("Planned Exit", "Unplanned Exit")
             )
             if exit_details:
                 child.exit_reason = exit_details[0].request_reason
@@ -349,6 +385,7 @@ class CompassionChild(models.Model):
         no_hold = [False]
         valid_states = {
             "W": no_hold,
+            "I": consignment_holds,
             "N": consignment_holds
             + [
                 HoldType.CHANGE_COMMITMENT_HOLD.value,
@@ -359,7 +396,6 @@ class CompassionChild(models.Model):
                 HoldType.SUB_CHILD_HOLD.value,
                 HoldType.NO_MONEY_HOLD.value,
             ],
-            "I": consignment_holds,
             "P": no_hold
             + [HoldType.NO_MONEY_HOLD.value, HoldType.SUB_CHILD_HOLD.value],
             "F": no_hold,
@@ -400,14 +436,14 @@ class CompassionChild(models.Model):
         return res
 
     def unlink_job(self):
-        """ Small wrapper to unlink only released children. """
+        """Small wrapper to unlink only released children."""
         return self.filtered(lambda c: c.state == "R").unlink()
 
     ##########################################################################
     #                             PUBLIC METHODS                             #
     ##########################################################################
     def details_answer(self, vals):
-        """ Called when receiving the answer of GetDetails message. """
+        """Called when receiving the answer of GetDetails message."""
         self.ensure_one()
         self.write(vals)
         self.env["compassion.child.description"].create({"child_id": self.id})
@@ -416,7 +452,7 @@ class CompassionChild(models.Model):
 
     @api.model
     def major_revision(self, commkit_data):
-        """ Called when a MajorRevision Kit is received. """
+        """Called when a MajorRevision Kit is received."""
         child_ids = list()
         for child_data in commkit_data.get(
             "BeneficiaryMajorRevisionList", [commkit_data]
@@ -430,7 +466,7 @@ class CompassionChild(models.Model):
 
     @api.model
     def new_kit(self, commkit_data):
-        """ New child kit is received. """
+        """New child kit is received."""
         children = self
         for child_data in commkit_data.get("BeneficiaryResponseList", [commkit_data]):
             global_id = child_data.get("Beneficiary_GlobalID")
@@ -448,9 +484,7 @@ class CompassionChild(models.Model):
         :return: True
         """
         self.ensure_one()
-        if self.us_grade_level and (
-            not self.education_level or self.education_level == "Not Enrolled"
-        ):
+        if self.us_grade_level:
             grade_mapping = {
                 "P": "Preschool",
                 "K": "Preschool",
@@ -470,8 +504,7 @@ class CompassionChild(models.Model):
             self.education_level = grade_mapping.get(self.us_grade_level)
 
     def get_number(self):
-        """ Returns a string telling how many children are in the recordset.
-        """
+        """Returns a string telling how many children are in the recordset."""
         number_dict = {
             1: _("one"),
             2: _("two"),
@@ -486,27 +519,20 @@ class CompassionChild(models.Model):
         }
         return number_dict.get(len(self), str(len(self))) + " " + self.get("child")
 
-    def json_to_data(self, json, mapping_name=None):
-        data = super().json_to_data(json, mapping_name)
-        # Update household
-        household_data = data.pop("household_id", {})
-        household_id = household_data.get("household_id")
-        household = self.env["compassion.household"].search(
-            [("household_id", "=", household_id)]
-        )
-        if household:
-            household.write(household_data)
-            data["household_id"] = household.id
-        elif household_data:
-            data["household_id"] = household.create(household_data).id
-        return data
+    def fetch_translations(self):
+        """
+        Contact GMC service in all installed languages in order to fetch all
+        terms used in child description.
+        """
+        self._fetch_translations(self.env.ref("child_compassion.beneficiaries_details"))
+        return self.edit_translations()
 
     ##########################################################################
     #                             VIEW CALLBACKS                             #
     ##########################################################################
     def get_infos(self):
         """Get the most recent case study, basic information, updates
-           portrait picture and creates the project if it doesn't exist.
+        portrait picture and creates the project if it doesn't exist.
         """
         message_obj = self.env["gmc.message"]
         action_id = self.env.ref("child_compassion.beneficiaries_details").id
@@ -532,14 +558,14 @@ class CompassionChild(models.Model):
         for child in self:
             # last_picture return false is there is no new pictures
             if child._get_last_pictures() and len(child.pictures_ids) > 1:
-                pictures = child.pictures_ids
+                pictures = child.pictures_ids.sorted()
                 today = date.today()
                 last_photo = pictures[1].date
                 new_photo = pictures[0].date
                 diff_pic = relativedelta(new_photo, last_photo)
                 diff_today = relativedelta(today, new_photo)
                 if (
-                        len(pictures) == 2 or diff_pic.months >= 6 or diff_pic.years > 0
+                    len(pictures) == 2 or diff_pic.months >= 6 or diff_pic.years > 0
                 ) and (diff_today.months <= 6 and diff_today.years == 0):
                     child.new_photo()
 
@@ -552,7 +578,7 @@ class CompassionChild(models.Model):
         pass
 
     def get_lifecycle_event(self):
-        onramp = OnrampConnector()
+        onramp = OnrampConnector(self.env)
         endpoint = "beneficiaries/{}/kits/beneficiarylifecycleeventkit"
         lifecylcle_ids = list()
         for child in self:
@@ -567,7 +593,7 @@ class CompassionChild(models.Model):
     #                            WORKFLOW METHODS                            #
     ##########################################################################
     def child_waiting_hold(self):
-        """ Called on child creation. """
+        """Called on child creation."""
         if self.mapped("hold_id"):
             local_ids = self.filtered("hold_id").mapped("local_id")
             raise UserError(
@@ -601,9 +627,8 @@ class CompassionChild(models.Model):
         self.ensure_one()
         if self.state in ("W", "F", "R"):
             raise UserError(
-                _(
-                    "[%s] This child has not a valid hold and cannot be sponsored."
-                ) % self.local_id
+                _("[%s] This child has not a valid hold and cannot be sponsored.")
+                % self.local_id
             )
         hold = self.hold_id
         if hold.type != HoldType.SUB_CHILD_HOLD.value:
@@ -631,16 +656,16 @@ class CompassionChild(models.Model):
             child.write(values)
             if update_hold:
                 try:
+                    expiration_date = child.hold_id.get_default_hold_expiration(
+                        HoldType.CONSIGNMENT_HOLD
+                    )
                     child.hold_id.write(
                         {
                             "type": HoldType.CONSIGNMENT_HOLD.value,
-                            "expiration_date":
-                            child.hold_id.get_default_hold_expiration(
-                                HoldType.CONSIGNMENT_HOLD
-                            ),
+                            "expiration_date": expiration_date,
                         }
                     )
-                except:
+                except UserError:
                     # If the hold cannot be changed it means it's no more valid
                     child.env.clear()
                     child.hold_id = False
@@ -651,14 +676,14 @@ class CompassionChild(models.Model):
         return True
 
     def child_released(self, state="R"):
-        """ Is called when a child is released to the global childpool. """
+        """Is called when a child is released to the global childpool."""
         to_release = self
         for child in self.filtered("hold_id"):
             if child.hold_id.state == "active":
                 logger.warning(
                     "Trying to release a child that has active hold: %s %s",
                     child.local_id,
-                    ''.join(traceback.format_stack())
+                    "".join(traceback.format_stack()),
                 )
                 to_release -= child
         to_release.write({"sponsor_id": False, "state": state, "hold_id": False})
@@ -678,7 +703,7 @@ class CompassionChild(models.Model):
         return True
 
     def child_departed(self):
-        """ Is called when a child is departed. """
+        """Is called when a child is departed."""
         return self.child_released(state="F")
 
     ##########################################################################
@@ -697,14 +722,13 @@ class CompassionChild(models.Model):
             self.message_post(
                 body=_("The picture has been updated."),
                 subject=_("Picture update"),
-                message_type="comment",
             )
 
         return pictures
 
     def _major_revision(self, vals):
-        """ Private method when a major revision is received for a child.
-            :param vals: Record values received from connect
+        """Private method when a major revision is received for a child.
+        :param vals: Record values received from connect
         """
         self.ensure_one()
         # First write revised values, then everything else

@@ -8,5 +8,4 @@
 #
 ##############################################################################
 
-from . import collect_gifts_wizard
-from . import gift_notification_settings
+from . import collect_gifts_wizard, gift_settings

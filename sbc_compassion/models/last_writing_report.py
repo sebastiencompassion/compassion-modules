@@ -7,8 +7,7 @@
 #
 ##############################################################################
 
-from odoo import models, fields, api
-from odoo import tools
+from odoo import fields, models, tools
 
 
 class LastWritingReport(models.Model):
@@ -21,7 +20,7 @@ class LastWritingReport(models.Model):
     sponsorship_id = fields.Many2one(
         "recurring.contract", "Sponsorship", readonly=False
     )
-    name = fields.Char(related="sponsorship_id.name")
+    name = fields.Char(related="sponsorship_id.display_name")
     partner_id = fields.Many2one("res.partner", "Partner", readonly=False)
     child_id = fields.Many2one("compassion.child", "Child", readonly=False)
     sponsorship_type = fields.Selection(related="sponsorship_id.type")

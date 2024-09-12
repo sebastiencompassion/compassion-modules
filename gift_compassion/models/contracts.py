@@ -10,20 +10,14 @@
 import calendar
 import datetime
 
-from odoo.addons.sponsorship_compassion.models.product_names import GIFT_CATEGORY
+from odoo import _, fields, models
 
-from odoo import api, models, fields, _
-from odoo.exceptions import UserError
+from odoo.addons.sponsorship_compassion.models.product_names import GIFT_CATEGORY
 
 
 class SponsorshipContract(models.Model):
     _inherit = "recurring.contract"
 
-    no_birthday_invoice = fields.Boolean(
-        help="The automatic birthday gift will not generate an invoice."
-             "This means a birthday gift will always be sent to GMC "
-             "even if we didn't register a payment."
-    )
     number_gifts = fields.Integer(compute="_compute_nb_gifts")
 
     def _compute_nb_gifts(self):
@@ -33,32 +27,35 @@ class SponsorshipContract(models.Model):
             if contract.type == "G":
                 sponsorship_ids = contract.mapped("contract_line_ids.sponsorship_id.id")
             contract.number_gifts = gift_obj.search_count(
-                [("sponsorship_id", "in", sponsorship_ids), ]
+                [
+                    ("sponsorship_id", "in", sponsorship_ids),
+                ]
             )
 
     def invoice_paid(self, invoice):
-        """ Prevent to reconcile invoices for fund-suspended projects
-            or sponsorships older than 3 months. """
+        """Prevent to reconcile invoices for fund-suspended projects
+        or sponsorships older than 3 months."""
         for invl in invoice.invoice_line_ids:
             existing_gift_for_invl = self.env["sponsorship.gift"].search(
                 [("invoice_line_ids", "in", invl.id)]
             )
             if (
-                    invl.product_id.categ_name == GIFT_CATEGORY
-                    and invl.contract_id.child_id
-                    and not existing_gift_for_invl
+                invl.product_id.categ_name == GIFT_CATEGORY
+                and invl.contract_id.child_id
+                and not existing_gift_for_invl
             ):
                 # Create the Sponsorship Gift
                 gift = self.env["sponsorship.gift"].create_from_invoice_line(invl)
 
                 if not invl.contract_id.is_active:
+                    # pylint: disable=translation-required
                     gift.message_post(body="Associated contract is not active")
                     gift.state = "verify"
 
-        super(SponsorshipContract, self).invoice_paid(invoice)
+        super().invoice_paid(invoice)
 
     def contract_active(self):
-        res = super(SponsorshipContract, self).contract_active()
+        res = super().contract_active()
 
         for contract in self:
             if contract.is_active:
@@ -70,23 +67,6 @@ class SponsorshipContract(models.Model):
                             gift.message_id.state = "new"
 
         return res
-
-    def invoice_unpaid(self, invoice):
-        """ Remove pending gifts or prevent unreconcile if gift are already
-            sent.
-        """
-        for invl in invoice.invoice_line_ids.filtered("gift_id"):
-            gift = invl.gift_id
-            if gift.gmc_gift_id and gift.state != "Undeliverable":
-                raise UserError(
-                    _("You cannot delete the %s. It is already sent to GMC.")
-                    % gift.name
-                )
-            # Remove the invoice line from the gift
-            gift.write({"invoice_line_ids": [(3, invl.id)]})
-            if not gift.invoice_line_ids:
-                gift.unlink()
-        super(SponsorshipContract, self).invoice_unpaid(invoice)
 
     def open_gifts(self):
         sponsorship_ids = self.ids

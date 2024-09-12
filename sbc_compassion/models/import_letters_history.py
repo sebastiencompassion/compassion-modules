@@ -12,15 +12,16 @@ This module reads a zip file containing scans of mail and finds the relation
 between the database and the mail.
 """
 import base64
-import logging
 import io
+import logging
 import traceback
 
 import fitz
 from PIL import Image
 
-from odoo import api, fields, models, _
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
+
 from ..tools import read_barcode
 
 logger = logging.getLogger(__name__)
@@ -31,6 +32,7 @@ class ImportLettersHistory(models.Model):
     _inherit = ["import.letter.config", "mail.thread"]
     _order = "create_date desc"
     _rec_name = "create_date"
+    _description = "S2B Letter Import"
 
     state = fields.Selection(
         [
@@ -53,7 +55,6 @@ class ImportLettersHistory(models.Model):
         "import.letter.line",
         "import_id",
         "Files to process",
-        ondelete="cascade",
         readonly=False,
     )
     letters_ids = fields.One2many(
@@ -71,7 +72,7 @@ class ImportLettersHistory(models.Model):
         "import_completed",
     )
     def _compute_state(self):
-        """ Check in which state self is by counting the number of elements in
+        """Check in which state self is by counting the number of elements in
         each Many2many
         """
         for import_letters in self:
@@ -109,9 +110,11 @@ class ImportLettersHistory(models.Model):
             )
             if other_import:
                 raise UserError(
-                    _("Another import with the same configuration is "
-                      "already open. Please finish it before creating a new "
-                      "one.")
+                    _(
+                        "Another import with the same configuration is "
+                        "already open. Please finish it before creating a new "
+                        "one."
+                    )
                 )
         return super().create(vals)
 
@@ -135,7 +138,7 @@ class ImportLettersHistory(models.Model):
         return True
 
     def button_review(self):
-        """ Returns a form view for import lines in order to browse them """
+        """Returns a form view for import lines in order to browse them"""
         self.ensure_one()
         return {
             "name": _("Review Imports"),
@@ -178,9 +181,11 @@ class ImportLettersHistory(models.Model):
 
         Using generators allows us to be more flexible
         on what we analyse without code duplication.
-        Additionally, since it uses generators, it does flood the memory with all the documents
+        Additionally, since it uses generators, it does flood
+        the memory with all the documents
         before the analysis
-        (With generators don't need to read all the documents before sending them to analysis)
+        (With generators don't need to read all the documents before sending
+        them to analysis)
 
         The generator must yield the following values:
             int: the current step in the analysis
@@ -197,13 +202,15 @@ class ImportLettersHistory(models.Model):
         for current_file, nb_files_to_import, filename in generator():
             logger.info(f"{current_file}/{nb_files_to_import} : {filename}")
 
-        logger.info(f"Letters import completed !")
+        logger.info("Letters import completed !")
         # remove all the files (now they are inside import_line_ids)
         self.data.unlink()
         self.import_completed = True
 
     def pdf_to_image(self, pdf_data):
-        pdf = fitz.Document("pdf", pdf_data)
+        pdf = fitz.Document(
+            "pdf", pdf_data
+        )  # TODO replace this library with standard Odoo one
         page0 = next(pdf.pages())
         image = self.convert_pdf_page_to_image(page0)
         return image
@@ -242,11 +249,14 @@ class ImportLettersHistory(models.Model):
             image = self.pdf_to_image(pdf_data)
             partner_code, child_code = read_barcode.letter_barcode_detection(image)
             letter_str, _ = self.env["ocr"].image_to_string(self.crop(image))
-            data["letter_language_id"] = self.env["langdetect"].detect_language(letter_str).id
+            data["letter_language_id"] = (
+                self.env["langdetect"].detect_language(letter_str).id
+            )
             data["letter_image_preview"] = self.create_preview(image)
 
-            partner = self.env["res.partner"].search([
-                ("ref", "=", partner_code), ("has_sponsorships", "=", True)])
+            partner = self.env["res.partner"].search(
+                [("ref", "=", partner_code), ("has_sponsorships", "=", True)]
+            )
 
             # since the child code and local_id accept NULL
             # this ensure that even if the child_code is None we don't retrieve
@@ -260,9 +270,12 @@ class ImportLettersHistory(models.Model):
 
             self.env["import.letter.line"].create(data)
             # this commit is really important
-            # it avoid having to keep the "data"s in memory until the whole process is finished
-            # each time a letter is scanned, it is also inserted in the DB
+            # it avoid having to keep the "data"s in memory until the whole process is
+            # finished each time a letter is scanned, it is also inserted in the DB
+            # pylint: disable=invalid-commit
             self._cr.commit()
-        except Exception as e:
-            logger.error(f"Couldn't import file {file_name} : \n{traceback.format_exc()}")
+        except Exception:
+            logger.error(
+                f"Couldn't import file {file_name} : \n{traceback.format_exc()}"
+            )
             return

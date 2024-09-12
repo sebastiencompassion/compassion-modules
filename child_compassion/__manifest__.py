@@ -29,17 +29,23 @@
 # pylint: disable=C8101
 {
     "name": "Compassion Children",
-    "version": "14.0.1.0.0",
-    "category": "Other",
+    "version": "14.0.1.1.0",
+    "category": "Compassion",
     "author": "Compassion CH",
     "license": "AGPL-3",
-    "website": "http://www.compassion.ch",
-    "development_status": "Stable",
+    "website": "https://github.com/CompassionCH/compassion-modules",
+    "development_status": "Production/Stable",
     "depends": [
         "message_center_compassion",
         "advanced_translation",
     ],
-    "external_dependencies": {"python": ["pyquery", "pytz", "timezonefinder", ]},
+    "external_dependencies": {
+        "python": [
+            "pyquery",
+            "pytz",
+            "timezonefinder",
+        ]
+    },
     "data": [
         "security/sponsorship_groups.xml",
         "security/ir.model.access.csv",
@@ -75,6 +81,7 @@
         "data/compassion.field.office.csv",
         "data/field.office.learning.csv",
         "data/global_partner.xml",
+        "data/ir.advanced.translation.csv",
         "data/fcp.involvement.csv",
         "data/fcp.church.ministry.csv",
         "data/fcp.program.csv",
@@ -94,6 +101,9 @@
         "data/fo.high.risk.csv",
         "data/fo.disaster.loss.csv",
         "data/queue_job.xml",
+        "report/childpack.xml",
+        "report/external_layout.xml",
+        "views/print_childpack_view.xml",
     ],
     "demo": [],
     "installable": True,

@@ -1,6 +1,9 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+/.venv
+/.pytest_cache
+/.ruff_cache
 
 # C extensions
 *.so
@@ -59,3 +62,4 @@ sms_sponsorship/webapp/node_modules
 sms_sponsorship/webapp/build
 sms_sponsorship/webapp/.idea
 /sbc_compassion/FPDF/.idea/
+/sbc_compassion/FPDF/stderr.txt

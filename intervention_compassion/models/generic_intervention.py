@@ -10,16 +10,16 @@
 
 import logging
 
-from odoo import models, fields, api, _
+from odoo import _, api, fields, models
 
 logger = logging.getLogger(__name__)
 
 
 class GenericIntervention(models.AbstractModel):
-    """ Generic information of interventions shared by subclasses:
-        - compassion.intervention : funded interventions
-        - compassion.global.intervention : available interventions in global
-                                           pool
+    """Generic information of interventions shared by subclasses:
+    - compassion.intervention : funded interventions
+    - compassion.global.intervention : available interventions in global
+                                       pool
     """
 
     _name = "compassion.generic.intervention"
@@ -30,7 +30,7 @@ class GenericIntervention(models.AbstractModel):
     name = fields.Char(readonly=True)
     intervention_id = fields.Char(required=True, readonly=True)
     field_office_id = fields.Many2one(
-        "compassion.field.office", "Field Office", readonly=True
+        "compassion.field.office", "National Office", readonly=True
     )
     description = fields.Text(readonly=True)
     additional_marketing_information = fields.Text(readonly=True)
@@ -43,7 +43,7 @@ class GenericIntervention(models.AbstractModel):
 
     # Schedule Information
     ######################
-    is_fo_priority = fields.Boolean("Is Field Office priority", readonly=True)
+    is_fo_priority = fields.Boolean("Is National Office priority", readonly=True)
     proposed_start_date = fields.Date(readonly=True)
     start_no_later_than = fields.Date(readonly=True)
     expected_duration = fields.Integer(
@@ -61,6 +61,7 @@ class GenericIntervention(models.AbstractModel):
     total_cost = fields.Float(readonly=True)
     requested_additional_funding = fields.Float(readonly=True)
     estimated_impacted_beneficiaries = fields.Integer(readonly=True)
+    disburse_without_commitment = fields.Boolean(readonly=True)
 
     @api.model
     def get_fields(self):
@@ -96,9 +97,9 @@ class GenericIntervention(models.AbstractModel):
         ]
 
     def get_vals(self):
-        """ Get the required field values of one record for other record
-            creation.
-            :return: Dictionary of values for the fields
+        """Get the required field values of one record for other record
+        creation.
+        :return: Dictionary of values for the fields
         """
         self.ensure_one()
         vals = self.read(self.get_fields())[0]

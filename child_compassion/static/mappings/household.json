@@ -3,9 +3,10 @@
   "model": "compassion.household",
   "mapping": {
     "BeneficiaryHouseholdMemberList": {
-      "field": "member_ids",
+      "field": "member_ids.id",
       "sub_mapping": "Household Member",
-      "allow_relational_creation": true
+      "search_relational_record": true,
+      "search_key": "name"
     },
     "FemaleGuardianEmploymentStatus": "female_guardian_job_type",
     "FemaleGuardianOccupation": "female_guardian_job",
@@ -16,12 +17,14 @@
     "MaleGuardianEmploymentStatus": "male_guardian_job_type",
     "MaleGuardianOccupation": "male_guardian_job",
     "NaturalMotherAlive": "mother_alive",
+    "NaturalFatherAlive": "father_alive",
     "NumberOfSiblingBeneficiaries": "number_beneficiaries",
     "ParentsMaritalStatus": "marital_status",
     "ParentsTogether": "parents_together",
     "RevisedValues": {
       "field": "revised_value_ids.name",
-      "allow_relational_creation": true
+      "search_relational_record": true,
+      "search_key": "name"
     }
   }
 }

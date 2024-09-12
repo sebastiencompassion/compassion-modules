@@ -9,13 +9,14 @@
 ##############################################################################
 
 
-from odoo import api, models, fields
+from odoo import fields, models
 
 
 class FieldOffice(models.Model):
     _name = "compassion.field.office"
     _inherit = "compassion.mapped.model"
-    _description = "Field Office"
+    _description = "National Office"
+    _order = "country_name,field_office_id"
 
     name = fields.Char("Name")
     field_office_id = fields.Char(required=True)
@@ -24,7 +25,7 @@ class FieldOffice(models.Model):
     )
     region = fields.Char()
     country_director = fields.Char()
-    date_start = fields.Date("Field office start")
+    date_start = fields.Date("National office start")
     issue_email = fields.Char()
     phone_number = fields.Char()
     website = fields.Char()
@@ -32,6 +33,7 @@ class FieldOffice(models.Model):
     country = fields.Char(string="country")
     country_id = fields.Many2one("res.country", "Country", readonly=False)
     country_code = fields.Char(related="country_id.code")
+    country_name = fields.Char(related="country_id.name", store=True, readonly=True)
     street = fields.Char()
     city = fields.Char()
     province = fields.Char()
@@ -68,7 +70,7 @@ class FieldOffice(models.Model):
     staff_number = fields.Integer()
     country_information = fields.Char()
     high_risk_ids = fields.Many2many(
-        "fo.high.risk", string="Beneficiary high risks", readonly=False
+        "fo.high.risk", string="Participant high risks", readonly=False
     )
 
     disaster_alert_ids = fields.Many2many(
@@ -76,14 +78,11 @@ class FieldOffice(models.Model):
     )
     fcp_hours_week = fields.Integer("Hours/week", default=8)
     fcp_meal_week = fields.Integer("Meals/week", default=1)
-    fcp_medical_check = fields.Integer(
-        "Medical check/year", default=1
-    )
+    fcp_medical_check = fields.Integer("Medical check/year", default=1)
     fcp_ids = fields.One2many(
         "compassion.project",
         "field_office_id",
         "FCP",
-
         readonly=False,
     )
 
@@ -99,8 +98,8 @@ class FieldOffice(models.Model):
     #                             VIEW CALLBACKS                             #
     ##########################################################################
     def update_informations(self):
-        """ Get the most recent informations for selected field offices and
-        update them accordingly. """
+        """Get the most recent informations for selected field offices and
+        update them accordingly."""
         message_obj = self.env["gmc.message"]
         action_id = self.env.ref("child_compassion.field_office_details").id
 

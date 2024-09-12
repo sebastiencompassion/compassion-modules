@@ -1,13 +1,13 @@
 ##############################################################################
 #
-#    Copyright (C) 2016 Compassion CH (http://www.compassion.ch)
+#    Copyright (C) 2016-2022 Compassion CH (http://www.compassion.ch)
 #    Releasing children from poverty in Jesus' name
 #    @author: Emanuel Cino <ecino@compassion.ch>
 #
 #    The licence is in the file __manifest__.py
 #
 ##############################################################################
-from odoo import api, models, fields
+from odoo import api, fields, models
 
 
 class CommunicationDefaults(models.AbstractModel):
@@ -100,16 +100,15 @@ class PartnerCommunication(models.Model):
 
         return True
 
-    def refresh_text(self, refresh_uid=False):
+    def refresh_text(self):
         """
         Refresh the success story as well
-        :param refresh_uid: User that refresh
         :return: True
         """
         for job in self:
             if not job.success_story_id.only_when_chosen:
                 job.set_success_story()
-        super().refresh_text(refresh_uid)
+        super().refresh_text()
         return True
 
     def send(self):
@@ -135,8 +134,8 @@ class PartnerCommunication(models.Model):
         """
         self.ensure_one()
         usage_count = dict()
-        type = stories.mapped("type")[0]
-        field = "success_story_id" if type == "story" else "success_sentence_id"
+        story_type = stories.mapped("type")[0]
+        field = "success_story_id" if story_type == "story" else "success_sentence_id"
         # Put the least used stories at end of list to choose them in case
         # of equality use for a partner.
         stories = reversed(stories.sorted(lambda s: s.current_usage_count))
@@ -147,17 +146,3 @@ class PartnerCommunication(models.Model):
             usage_count[usage] = s
         min_used = min(usage_count.keys())
         return usage_count[min_used], min_used
-
-
-class HrDepartment(models.Model):
-    _inherit = "hr.department"
-
-    # Translate name of department for signatures
-    name = fields.Char(translate=True)
-
-
-class ResCompany(models.Model):
-    _inherit = "res.company"
-
-    # Translate name of Company for signatures
-    address_name = fields.Char(translate=True)

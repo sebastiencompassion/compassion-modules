@@ -30,12 +30,12 @@
 {
     "name": "Compassion Interventions",
     "version": "14.0.1.0.0",
-    "category": "Other",
+    "category": "Compassion",
     "author": "Compassion CH",
     "license": "AGPL-3",
-    "website": "http://www.compassion.ch",
+    "website": "https://github.com/CompassionCH/compassion-modules",
     "depends": [
-        "child_compassion",  # modules/child_compassion
+        "sponsorship_compassion",
         "base_automation",
     ],
     "external_dependencies": {},

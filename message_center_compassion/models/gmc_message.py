@@ -13,16 +13,16 @@ import re
 import traceback
 from datetime import datetime
 
-from odoo import api, models, fields, tools, _
+from odoo import _, api, fields, models
 from odoo.exceptions import UserError
+
 from ..tools.onramp_connector import OnrampConnector
 
 logger = logging.getLogger(__name__)
-testing = tools.config.get("test_enable")
 
 
 class GmcMessage(models.Model):
-    """ Pool of messages exchanged between Compassion CH and GMC. """
+    """Pool of messages exchanged between Compassion CH and GMC."""
 
     _name = "gmc.message"
     _inherit = ["mail.thread", "mail.activity.mixin"]
@@ -44,13 +44,15 @@ class GmcMessage(models.Model):
     object_ids = fields.Char(
         "Related records",
         help="Used for incoming messages containing "
-             "several records. (ids separated by commas)",
+        "several records. (ids separated by commas)",
     )
     res_name = fields.Char(compute="_compute_res_name", store=True)
     partner_id = fields.Many2one("res.partner", "Partner", readonly=False)
 
     request_id = fields.Char("Request ID", readonly=True)
-    date = fields.Datetime("Message Date", required=True, default=fields.Datetime.now)
+    date = fields.Datetime(
+        "Message Date", required=True, default=fields.Datetime.now, index=True
+    )
     action_id = fields.Many2one(
         "gmc.action", "GMC Message", ondelete="restrict", required=False, readonly=True
     )
@@ -68,6 +70,7 @@ class GmcMessage(models.Model):
         readonly=True,
         default="new",
         tracking=True,
+        index=True,
     )
     failure_reason = fields.Text("Failure details", tracking=True)
     headers = fields.Text(readonly=True)
@@ -112,21 +115,23 @@ class GmcMessage(models.Model):
     ##########################################################################
     #                             PUBLIC METHODS                             #
     ##########################################################################
-    
+
     def update_res_name(self):
         self._compute_res_name()
 
-    
     def process_messages(self):
         new_messages = self.filtered(lambda m: m.state not in ("postponed", "success"))
         new_messages.write({"state": "pending", "failure_reason": False})
         if self.env.context.get("async_mode", True):
-            new_messages.with_delay()._process_messages()
+            # We define the priority with the first message because we're supposed
+            # to have only one actions by messages group
+            new_messages.with_delay(
+                priority=self[0].action_id.priority
+            )._process_messages()
         else:
             new_messages._process_messages()
         return True
 
-    
     def get_answer_dict(self, index=0):
         answer = json.loads(self[index].answer)
         if isinstance(answer, list):
@@ -136,18 +141,23 @@ class GmcMessage(models.Model):
     ##########################################################################
     #                             VIEW CALLBACKS                             #
     ##########################################################################
-    
     def force_success(self):
         self.write({"state": "success", "failure_reason": False})
         self.mapped("message_ids").unlink()
         return True
 
-    
     def reset_message(self):
-        self.write({"state": "new", "process_date": False, "failure_reason": False})
+        self.write(
+            {
+                "state": "new",
+                "process_date": False,
+                "failure_reason": False,
+                "answer": False,
+                "request_id": False,
+            }
+        )
         return True
 
-    
     def open_related(self):
         self.ensure_one()
         if self.direction == "out":
@@ -173,16 +183,15 @@ class GmcMessage(models.Model):
     ##########################################################################
     #                             PRIVATE METHODS                            #
     ##########################################################################
-    
     def _process_messages(self):
-        """ Process given messages in pool. """
+        """Process given messages in pool."""
         today = datetime.now()
         messages = self.filtered(lambda mess: mess.state == "pending")
         if not self.env.context.get("force_send"):
             messages = messages.filtered(lambda mess: mess.date <= today)
 
         # Verify all messages have the same action (cannot execute multiple
-        # actions at once)
+        # actions at once) If this is modified we should adapt the call of this method
         action = messages.mapped("action_id")
         if len(action) > 1:
             raise UserError(
@@ -200,7 +209,7 @@ class GmcMessage(models.Model):
         if action.direction == "in":
             try:
                 message_update.update(self._perform_incoming_action())
-            except:
+            except Exception:
                 # Abort pending operations
                 logger.error("Failure when processing message", exc_info=True)
                 self.env.cr.rollback()
@@ -223,8 +232,8 @@ class GmcMessage(models.Model):
         return True
 
     def _perform_incoming_action(self):
-        """ Convert the data incoming from Connect into Odoo object values
-        and call the process_commkit method on the related object. """
+        """Convert the data incoming from Connect into Odoo object values
+        and call the process_commkit method on the related object."""
         object_ids = list()
         action = self.mapped("action_id")
         for message in self:
@@ -242,13 +251,13 @@ class GmcMessage(models.Model):
         }
 
     def _perform_outgoing_action(self):
-        """ Send a message to Compassion Connect"""
+        """Send a message to Compassion Connect"""
         # Load objects
         action = self.mapped("action_id")
         data_objects = (
             self.env[action.model]
-                .with_context(lang="en_US")
-                .browse(self.mapped("object_id"))
+            .with_context(lang="en_US")
+            .browse(self.mapped("object_id"))
         )
 
         # Replay answer if message was already sent and received success
@@ -262,8 +271,8 @@ class GmcMessage(models.Model):
         # Notify objects sent to connect for special handling if needed.
         data_objects = (
             self.env[action.model]
-                .with_context(lang="en_US")
-                .browse(to_send.mapped("object_id"))
+            .with_context(lang="en_US")
+            .browse(to_send.mapped("object_id"))
         )
         if hasattr(data_objects, "on_send_to_connect"):
             data_objects.on_send_to_connect()
@@ -280,14 +289,14 @@ class GmcMessage(models.Model):
                 for j in range(0, nb_batches + remaining):
                     i = j * split
                     message_data = {action.connect_outgoing_wrapper: list()}
-                    for data_object in data_objects[i: i + split]:
+                    for data_object in data_objects[i : i + split]:
                         if not action.no_outgoing_data:
                             message_data[action.connect_outgoing_wrapper].append(
                                 data_object.data_to_json(action.mapping_id.name)
                             )
                         else:
                             message_data[action.connect_outgoing_wrapper].append({})
-                    to_send[i: i + split]._send_message(message_data)
+                    to_send[i : i + split]._send_message(message_data)
             else:
                 # Send individual message for each object
                 for i in range(0, len(data_objects)):
@@ -309,7 +318,7 @@ class GmcMessage(models.Model):
     def _send_message(self, message_data):
         """Sends the prepared message and gets the answer from GMC."""
         action = self.mapped("action_id")
-        onramp = OnrampConnector()
+        onramp = OnrampConnector(self.env)
         url_endpoint = self._get_url_endpoint()
         if action.request_type == "GET":
             onramp_answer = onramp.send_message(
@@ -331,7 +340,7 @@ class GmcMessage(models.Model):
                     results = results.get(wrapper, results)
         except (AttributeError, KeyError):
             logger.error("Unexpected answer: %s", results)
-        if not results:
+        if not results and onramp_answer.get("code") != 200:
             self._answer_failure(content_data, onramp_answer)
             return
 
@@ -339,8 +348,8 @@ class GmcMessage(models.Model):
             results = [results]
         data_objects = (
             self.env[action.model]
-                .with_context(lang="en_US")
-                .browse(self.mapped("object_id"))
+            .with_context(lang="en_US")
+            .browse(self.mapped("object_id"))
         )
 
         if 200 <= onramp_answer["code"] < 300:
@@ -358,14 +367,12 @@ class GmcMessage(models.Model):
                     self[i].write(
                         {
                             "content": content_data,
-                            "request_id": onramp_answer.get(
-                                "request_id") or str(self[i].id),
+                            "request_id": onramp_answer.get("request_id")
+                            or str(self[i].id),
                             "answer": json.dumps(result, indent=4, sort_keys=True),
-                            "state": "success"
+                            "state": "success",
                         }
                     )
-                    if not testing:
-                        self.env.cr.commit()  # pylint:disable=invalid-commit
                     self[i]._process_single_answer(data_objects[i], result)
                 elif isinstance(result, dict):
                     if action.failure_method:
@@ -408,27 +415,31 @@ class GmcMessage(models.Model):
         self.ensure_one()
         action = self.action_id
         try:
-            answer_data = data_object.json_to_data(answer_data, action.mapping_id.name)
-            f = getattr(data_object, action.success_method)
-            f(answer_data)
-            self.state = "success"
+            with self.env.cr.savepoint():
+                answer_data = data_object.json_to_data(
+                    answer_data, action.mapping_id.name
+                )
+                f = getattr(data_object, action.success_method)
+                f(answer_data)
+                self.state = "success"
         except Exception as e:
             logger.error(traceback.format_exc())
-            self.env.cr.rollback()
-            self.env.clear()
             try:
                 if action.failure_method:
                     getattr(data_object, action.failure_method)(answer_data)
-            except:
-                pass
+            except Exception:
+                logger.warning("Failure method of message %s failed", [action.name])
             self.write(
-                {"state": "odoo_failure", "failure_reason": str(e), }
+                {
+                    "state": "odoo_failure",
+                    "failure_reason": str(e),
+                }
             )
 
     def _answer_failure(self, content_data, onramp_answer, results=None):
-        """ Write error message when onramp answer is not a success.
-            :onramp_answer: complete message received back
-            :results: extracted content from the answer
+        """Write error message when onramp answer is not a success.
+        :onramp_answer: complete message received back
+        :results: extracted content from the answer
         """
         error_code = onramp_answer.get("code", onramp_answer.get("Code"))
         if results and isinstance(results, list):
@@ -442,13 +453,14 @@ class GmcMessage(models.Model):
                 "state": "failure",
                 "failure_reason": f"[{error_code}] {error_message}",
                 "answer": json.dumps(
-                    results or onramp_answer, indent=4, sort_keys=True),
-                "content": content_data
+                    results or onramp_answer, indent=4, sort_keys=True
+                ),
+                "content": content_data,
             }
         )
 
     def _get_url_endpoint(self):
-        """ Gets the endpoint of GMC based on the action. """
+        """Gets the endpoint of GMC based on the action."""
         url_endpoint = self.mapped("action_id").connect_service
         if "${object" in url_endpoint:
             url_endpoint = re.sub(
@@ -459,7 +471,7 @@ class GmcMessage(models.Model):
         return url_endpoint
 
     def _replace_object_string(self, object_match):
-        """ Takes a string like ${object.field} and returns the field. """
+        """Takes a string like ${object.field} and returns the field."""
         self.ensure_one()
         obj = self.env[self.action_id.model].browse(self.object_id)
         field_name = object_match.groups()[1]
@@ -467,7 +479,7 @@ class GmcMessage(models.Model):
         return str(field_value)
 
     def _validate_outgoing_action(self):
-        """ Inherit to add message validation before sending it."""
+        """Inherit to add message validation before sending it."""
         return True
 
     @api.model
