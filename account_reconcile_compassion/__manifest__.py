@@ -36,7 +36,7 @@
     "website": "https://github.com/CompassionCH/compassion-modules",
     "depends": [
         "account",
-        "account_reconciliation_widget",
+        "account_reconciliation_widget",  # OCA/account-reconcile
         "recurring_contract",
         "analytic",
         "sponsorship_compassion",
@@ -52,9 +52,8 @@
         "views/res_config_view.xml",
         "views/account_journal.xml",
         "views/statement_view.xml",
-        "views/statement_operation_view.xml",
+        "views/account_reconcile_model_views.xml",
         "views/view_bank_statement_form.xml",
-        "views/view_account_reconcile_compassion.xml",
     ],
     "qweb": ["static/src/xml/account_move_reconciliation.xml"],
     "auto_install": False,

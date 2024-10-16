@@ -13,14 +13,27 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
   var _t = core._t;
 
   statement_action.StatementAction.include({
-    // Restrict displayed lines, for better performance. (10 is the default in parent module)
-    // config: _.extend(
-    //     {},
-    //     statement_action.StatementAction.prototype.config,
-    //     {
-    //         defaultDisplayQty: 10
-    //     }
-    // ),
+    // Event which allows to modify fields programmatically The
+    // update_proposition event handled by _onAction uses the target of the
+    // event to get the handle, which won't be available if the event is
+    // triggered programmatically. Therefore the handle is passed in data
+    custom_events: _.extend(
+      {},
+      statement_action.StatementAction.prototype.custom_events,
+      {
+        update_proposition_programmatically:
+          "_onUpdatePropositionProgrammatically",
+      }
+    ),
+
+    _onUpdatePropositionProgrammatically: function (event) {
+      var self = this;
+      var handle = event.data.data.handle;
+      var line = this.model.getLine(handle);
+      this.model.updateProposition(handle, event.data.data).then(function () {
+        self._getWidget(handle).update(line);
+      });
+    },
 
     // BUG FIX in module reconciliation_widget when some lines are not visible.
     // Code copied from there.
@@ -164,11 +177,11 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
                 ["state", "!=", "draft"],
               ],
             },
-            //                    {
-            //                        relation: "res.partner",
-            //                        type: "many2one",
-            //                        name: "user_id",
-            //                    },
+            {
+              relation: "res.partner",
+              type: "many2one",
+              name: "user_id",
+            },
             {
               type: "char",
               name: "comment",
@@ -182,8 +195,12 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
             account_id: {
               string: _t("Account"),
             },
-            label: { string: _t("Label") },
-            amount: { string: _t("Account") },
+            label: {
+              string: _t("Label"),
+            },
+            amount: {
+              string: _t("Account"),
+            },
             // CHANGE: Product, sponsorship, user_id and comment
             // added from original function
             product_id: {
@@ -192,9 +209,9 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
             sponsorship_id: {
               string: _t("Sponsorship"),
             },
-            //                    user_id: {
-            //                        string: _t("Ambassador"),
-            //                    },
+            user_id: {
+              string: _t("Ambassador"),
+            },
             comment: {
               string: _t("Gift instructions"),
             },
@@ -211,14 +228,21 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
             self,
             "account_id",
             record,
-            { mode: "edit", attrs: { can_create: false } }
+            {
+              mode: "edit",
+              attrs: {
+                can_create: false,
+              },
+            }
           );
 
           self.fields.journal_id = new relational_fields.FieldMany2One(
             self,
             "journal_id",
             record,
-            { mode: "edit" }
+            {
+              mode: "edit",
+            }
           );
 
           self.fields.tax_ids = new relational_fields.FieldMany2ManyTags(
@@ -227,7 +251,9 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
             record,
             {
               mode: "edit",
-              additionalContext: { append_type_to_tax_name: true },
+              additionalContext: {
+                append_type_to_tax_name: true,
+              },
             }
           );
 
@@ -235,21 +261,27 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
             self,
             "analytic_account_id",
             record,
-            { mode: "edit" }
+            {
+              mode: "edit",
+            }
           );
 
           self.fields.analytic_tag_ids = new relational_fields.FieldMany2ManyTags(
             self,
             "analytic_tag_ids",
             record,
-            { mode: "edit" }
+            {
+              mode: "edit",
+            }
           );
 
           self.fields.force_tax_included = new basic_fields.FieldBoolean(
             self,
             "force_tax_included",
             record,
-            { mode: "edit" }
+            {
+              mode: "edit",
+            }
           );
 
           self.fields.label = new basic_fields.FieldChar(
@@ -278,7 +310,9 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
             self,
             "to_check",
             record,
-            { mode: "edit" }
+            {
+              mode: "edit",
+            }
           );
 
           // CHANGE: Product, sponsorship, user_id and comment
@@ -301,14 +335,14 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
             }
           );
 
-          //                    self.fields.user_id = new relational_fields.FieldMany2One(
-          //                        self,
-          //                        "user_id",
-          //                        record,
-          //                        {
-          //                            mode: "edit",
-          //                        }
-          //                    );
+          self.fields.user_id = new relational_fields.FieldMany2One(
+            self,
+            "user_id",
+            record,
+            {
+              mode: "edit",
+            }
+          );
 
           self.fields.comment = new basic_fields.FieldChar(
             self,
@@ -374,7 +408,9 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
           self.fields.sponsorship_id.appendTo(
             $create.find(".create_sponsorship_id .o_td_field")
           );
-          //                    self.fields.user_id.appendTo($create.find(".create_user_id .o_td_field"));
+          self.fields.user_id.appendTo(
+            $create.find(".create_user_id .o_td_field")
+          );
           self.fields.comment.appendTo(
             $create.find(".create_comment .o_td_field")
           );
@@ -404,7 +440,7 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
     quickCreateFields: [
       "product_id",
       "sponsorship_id",
-      //            "user_id",
+      "user_id",
       "comment",
       "account_id",
       "amount",
@@ -419,72 +455,91 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
     createProposition: function (handle) {
       var self = this;
       var line = this.getLine(handle);
+      var payment_ref = line.st_line.payment_ref;
+
+      if (payment_ref.trim().match(/^\d{27}$/)) {
+        payment_ref = payment_ref.trim();
+      } else {
+        payment_ref = false;
+      }
+
+      var gift_ref_key = payment_ref[21];
+      var gift_default_code = {
+        1: "gift_birthday",
+        2: "gift_gen",
+        3: "gift_family",
+        4: "gift_project",
+        5: "gift_graduation",
+      };
+
+      var gift_ref_default_code = false;
+
+      if (gift_ref_key in gift_default_code) {
+        gift_ref_default_code = gift_default_code[gift_ref_key];
+      }
 
       // Try to prefill fields from the customer payment
-      var line_name = line.st_line.name;
-      if (line_name) {
-        var child_gift_match = line_name.match(/\[.+\]/);
-        if (child_gift_match) {
-          // Search gift product
-          var gift_name = line_name.replace(child_gift_match[0], "");
-          rpc
-            .query({
-              model: "product.product",
-              method: "search",
-              args: [[["name", "like", gift_name]]],
-            })
-            .then(function (product_ids) {
-              if (product_ids !== "undefined" && product_ids.length > 0) {
-                // This emits a custom event handled by
-                // _onUpdatePropositionProgrammaticaly()
-                // It is done this way because only StatementAction
-                // has access to the mode for updating the data and
-                // the renderer for refreshing the interface
-                self.trigger_up("update_proposition_programmaticaly", {
-                  data: {
-                    product_id: {
-                      id: product_ids[0],
-                    },
-                    handle: handle,
+      if (gift_ref_default_code) {
+        // Search gift product
+        rpc
+          .query({
+            model: "product.product",
+            method: "search",
+            args: [[["default_code", "ilike", gift_ref_default_code]]],
+          })
+          .then(function (product_ids) {
+            if (product_ids !== "undefined" && product_ids.length > 0) {
+              // This emits a custom event handled by
+              // _onUpdatePropositionProgrammatically()
+              // It is done this way because only StatementAction
+              // has access to the mode for updating the data and
+              // the renderer for refreshing the interface
+              self.trigger_up("update_proposition_programmatically", {
+                data: {
+                  product_id: {
+                    id: product_ids[0],
                   },
-                });
-              }
-            });
+                  handle: handle,
+                },
+              });
+            }
+          });
 
-          // Search sponsorship
-          var child_code = child_gift_match[0]
-            .replace("[", "")
-            .replace("]", "")
-            .match(/\w+/)[0];
-          rpc
-            .query({
-              model: "recurring.contract",
-              method: "search",
-              args: [
-                [
-                  ["child_code", "like", child_code],
-                  "|",
-                  ["correspondent_id", "=", line.partner_id],
-                  ["partner_id", "=", line.partner_id],
-                ],
+        var gift_commitment_number_ref_key = payment_ref.substring(19, 21);
+        var gift_commitment_number = parseInt(
+          gift_commitment_number_ref_key
+        ).toString();
+
+        // Search sponsorship
+        rpc
+          .query({
+            model: "recurring.contract",
+            method: "search",
+            args: [
+              [
+                ["commitment_number", "=", gift_commitment_number],
+                ["type", "in", ["S", "SC", "SWP"]],
+                "|",
+                ["correspondent_id", "=", line.partner_id],
+                ["partner_id", "=", line.partner_id],
               ],
-            })
-            .then(function (sponsorship_ids) {
-              if (
-                typeof sponsorship_ids !== "undefined" &&
-                sponsorship_ids.length > 0
-              ) {
-                self.trigger_up("update_proposition_programmaticaly", {
-                  data: {
-                    sponsorship_id: {
-                      id: sponsorship_ids[0],
-                    },
-                    handle: handle,
+            ],
+          })
+          .then(function (sponsorship_ids) {
+            if (
+              typeof sponsorship_ids !== "undefined" &&
+              sponsorship_ids.length > 0
+            ) {
+              self.trigger_up("update_proposition_programmatically", {
+                data: {
+                  sponsorship_id: {
+                    id: sponsorship_ids[0],
                   },
-                });
-              }
-            });
-        }
+                  handle: handle,
+                },
+              });
+            }
+          });
       }
 
       return this._super(handle);
@@ -503,8 +558,8 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
           if (changes) {
             if (changes.account_id) values.account_id = changes.account_id;
             if (changes.tax_id) values.tax_id = changes.tax_id;
-            if (changes.analytic_id)
-              values.analytic_account_id = changes.analytic_id;
+            if (changes.analytic_account_id)
+              values.analytic_account_id = changes.analytic_account_id;
             if (changes.analytic_tag_ids) {
               // Replace analytic tags as the parent method doesn't support several tags added
               var line = self.getLine(handle);
@@ -528,8 +583,7 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
         return r.id === reconcileModelId;
       });
       var fields = [
-        // CHANGE:  product_id added from the original fields list
-        "product_id",
+        "product_id", // product_id added from the original fields list
         "account_id",
         "amount",
         "amount_type",
@@ -537,30 +591,45 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
         "journal_id",
         "label",
         "force_tax_included",
-        "tax_id",
+        "tax_ids",
         "analytic_tag_ids",
+        "to_check",
+        "amount_string",
+        "decimal_separator",
       ];
       this._blurProposition(handle);
-
-      var focus = this._formatQuickCreate(line, _.pick(reconcileModel, fields));
-      focus.reconcileModelId = reconcileModelId;
-      line.reconciliation_proposition.push(focus);
-
-      if (reconcileModel.has_second_line) {
-        var second = {};
-        _.each(fields, function (key) {
-          second[key] =
-            "second_" + key in reconcileModel
-              ? reconcileModel["second_" + key]
-              : reconcileModel[key];
-        });
-        focus = this._formatQuickCreate(line, second);
-        focus.reconcileModelId = reconcileModelId;
-        line.reconciliation_proposition.push(focus);
-        this._computeReconcileModels(handle, reconcileModelId);
+      let focus = null;
+      const defs = [];
+      for (const reconcileModelLineIndex in reconcileModel.line_ids) {
+        const reconcileModelLine =
+          reconcileModel.line_ids[reconcileModelLineIndex];
+        if (reconcileModelLineIndex === "0") {
+          focus = this._formatQuickCreate(
+            line,
+            _.pick(reconcileModelLine, fields),
+            reconcileModel
+          );
+          focus.reconcileModelId = reconcileModelId;
+          line.reconciliation_proposition.push(focus);
+        } else {
+          defs.push(
+            this._computeLine(line).then(() => {
+              const second_focus = this._formatQuickCreate(
+                line,
+                _.pick(reconcileModelLine, fields),
+                reconcileModel
+              );
+              second_focus.reconcileModelId = reconcileModelId;
+              line.reconciliation_proposition.push(second_focus);
+              this._computeReconcileModels(handle, reconcileModelId);
+            })
+          );
+        }
       }
-      line.createForm = _.pick(focus, this.quickCreateFields);
-      return this._computeLine(line);
+      return Promise.all(defs).then(() => {
+        line.createForm = _.pick(focus, this.quickCreateFields);
+        return this._computeLine(line);
+      });
     },
 
     // Add product_id to the QuickCreate prop
@@ -578,7 +647,7 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
       result.sponsorship_id = prop.sponsorship_id
         ? prop.sponsorship_id.id
         : null;
-      //            result.user_id = prop.user_id ? prop.user_id.id : null;
+      result.user_id = prop.user_id ? prop.user_id.id : null;
       result.comment = prop.comment;
       result.avoid_thankyou_letter = prop.avoid_thankyou_letter
         ? prop.avoid_thankyou_letter
@@ -587,6 +656,15 @@ odoo.define("account_reconcile_compassion.reconciliation", function (require) {
         ? prop.analytic_account_id.id
         : null;
       return result;
+    },
+
+    removeProposition: function (handle, id) {
+      // T1585 Prevent unsetting the partner when removing a line
+      var line = this.getLine(handle);
+      if (line.partner_id && line.st_line.has_no_partner) {
+        line.st_line.has_no_partner = false;
+      }
+      return this._super(handle, id);
     },
   });
 

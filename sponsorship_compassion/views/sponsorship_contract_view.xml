@@ -45,7 +45,7 @@
                 <field
           name="correspondent_id"
           options="{'create': false, 'm2o_dialog': false}"
-          attrs="{'invisible':[('type', 'not in', ['S','SC','SWP'])], 'required': [('type', 'in', ['S', 'SC','SWP'])]}"
+          attrs="{'invisible':[('type', 'not in', ['S','SC','SWP','CSP'])], 'required': [('type', 'in', ['S', 'SC','SWP','CSP'])]}"
         />
                 <field name="send_gifts_to" />
             </field>
@@ -53,7 +53,7 @@
             <field name="medium_id" position="attributes">
                 <attribute
           name="attrs"
-        >{'required':[('type', 'in', ['S','SC','SWP'])]}</attribute>
+        >{'required':[('type', 'in', ['S','SC','SWP']), ('id', '=', False)]}</attribute>
             </field>
             <field name="medium_id" position="before">
                 <field
@@ -230,6 +230,24 @@
                              ('start_date', '&lt;=', context_today().strftime('%Y-%m-%d'))]"
           help="Last 3 months"
         />
+                <separator />
+                <filter
+          string="Child Sponsorship"
+          name="type_sponsorship"
+          domain="[('type', '=', 'S')]"
+        />
+                <filter
+          string="Write&amp;Pray Sponsorship"
+          name="type_write_pray"
+          domain="[('type', '=', 'SWP')]"
+        />
+            </filter>
+            <filter name="payment_mode" position="before">
+                <filter
+          name="group_type"
+          domain="[]"
+          context="{'group_by': 'type'}"
+        />
             </filter>
         </field>
     </record>
@@ -306,7 +324,9 @@
         <field name="res_model">recurring.contract</field>
         <field name="view_mode">tree,kanban,form,graph,pivot</field>
         <field name="domain">[('type','like','S')]</field>
-        <field name="context">{'default_type':'S'}</field>
+        <field
+      name="context"
+    >{'default_type':'S', 'search_default_draft': 1, 'search_default_waiting': 1, 'search_default_active': 1}</field>
     </record>
 
     <!-- Put Invoicing section in Accounting/Customers Menu -->

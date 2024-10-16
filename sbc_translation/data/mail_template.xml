@@ -3,9 +3,9 @@
         <field name="name">Translation issue notification</field>
         <field name="subject">A translation issue was raised</field>
         <field name="model_id" ref="model_correspondence" />
-        <field
-      name="email_from"
-    >${object.new_translator_id.partner_id.email}</field>
+        <field name="email_from">
+            ${object.new_translator_id.partner_id.email}
+        </field>
         <field name="email_to">${object.translation_supervisor_id.email}</field>
         <field name="body_html" type="html">
             <ul>
@@ -17,10 +17,36 @@
         </field>
     </record>
 
+    <template id="translation_issue_log">
+        <p>
+            <b>Issue type</b>:
+            <span t-field="record.translation_issue" />
+        </p>
+        <span t-field="record.translation_issue_comments" />
+    </template>
+
+    <template id="translation_comments_update">
+        <p>
+            Comments updated
+        </p>
+        <ul>
+            <li t-foreach="comments" t-as="comment">
+                Page
+                <t t-esc="comment['page_index']"/>
+                paragraph
+                <t t-esc="comment['paragraph_index']"/>:
+            <t t-esc="comment['old']" />
+            <span
+                    class="o_Message_trackingValueSeparator o_Message_trackingValueItem fa fa-long-arrow-right"
+                    title="Changed"
+                    role="img"
+            />
+            <t t-esc="comment['new']" />
+            </li>
+        </ul>
+    </template>
+
     <template id="comments_reply">
-        <p>Dear <span t-field="object.new_translator_id.partner_id.name" />,</p>
-        <p
-    >You just received a reply regarding your comments on the translation:</p>
         <p t-raw="reply" />
         <hr />
         <table>
@@ -50,5 +76,11 @@
         <p><a
         t-att-href="object.translation_url"
       >Open the letter in the translation platform</a></p>
+    </template>
+
+    <template id="issue_reply">
+        <p>Dear <span t-field="object.new_translator_id.partner_id.name" />,</p>
+        <p>You have just received a response to a problem about a letter on the translation platform you reported:</p>
+        <p t-raw="reply" />
     </template>
 </odoo>

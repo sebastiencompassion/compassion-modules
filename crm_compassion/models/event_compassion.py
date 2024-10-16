@@ -56,6 +56,12 @@ class EventCompassion(models.Model):
         help="Template used to generate receipts for ambassadors",
         domain=[("model", "=", "account.move.line")],
     )
+    ambassador_sponsorship_config_id = fields.Many2one(
+        "partner.communication.config",
+        "Ambassador Sponsorship Notification",
+        help="Template used to generate sponsorship notifications for ambassadors",
+        domain=[("model", "=", "recurring.contract")],
+    )
     hold_ids = fields.One2many("compassion.hold", "event_id", readonly=True)
     allocate_child_ids = fields.One2many(
         "compassion.child",
@@ -140,6 +146,7 @@ class EventCompassion(models.Model):
         default=lambda self: self.env.company,
         readonly=False,
     )
+    country_id = fields.Many2one("res.country", "Country", readonly=False)
 
     ##########################################################################
     #                             FIELDS METHODS                             #
@@ -388,6 +395,7 @@ class EventCompassion(models.Model):
                 "default_company_id": self.company_id.id,
                 "search_default_account_id": self.analytic_id.id,
             },
+            "domain": [("id", "in", self.expense_line_ids.ids)],
         }
 
     def show_income(self):

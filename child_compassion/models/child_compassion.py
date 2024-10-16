@@ -9,7 +9,7 @@
 ##############################################################################
 import logging
 import traceback
-from datetime import date, datetime
+from datetime import date
 
 from dateutil.relativedelta import relativedelta
 
@@ -285,8 +285,8 @@ class CompassionChild(models.Model):
         readonly=False,
     )
     household_id = fields.Many2one("compassion.household", "Household", readonly=True)
-    portrait = fields.Image(related="pictures_ids.headshot")
-    fullshot = fields.Image(related="pictures_ids.fullshot")
+    portrait = fields.Image(compute="_compute_portrait")
+    fullshot = fields.Image(compute="_compute_fullshot")
     child_disaster_impact_ids = fields.One2many(
         "child.disaster.impact", "child_id", "Child Disaster Impact", readonly=True
     )
@@ -294,7 +294,7 @@ class CompassionChild(models.Model):
 
     # Descriptions
     ##############
-    desc_en = fields.Html("English description", readonly=True)
+    description_en = fields.Html("English description", readonly=True)
 
     description_left = fields.Html(compute="_compute_description")
     description_right = fields.Html(compute="_compute_description")
@@ -348,6 +348,20 @@ class CompassionChild(models.Model):
     def _compute_available(self):
         for child in self:
             child.is_available = child.state in self._available_states()
+
+    @api.depends("pictures_ids")
+    def _compute_portrait(self):
+        for child in self:
+            if child.pictures_ids:
+                child.portrait = child.pictures_ids.sorted()[:1].headshot
+            else:
+                child.portrait = False
+
+    @api.depends("pictures_ids")
+    def _compute_fullshot(self):
+        for child in self:
+            if child.pictures_ids:
+                child.fullshot = child.pictures_ids.sorted()[:1].fullshot
 
     @api.model
     def _available_states(self):
@@ -434,10 +448,6 @@ class CompassionChild(models.Model):
         res = super().unlink()
         holds.release_hold()
         return res
-
-    def unlink_job(self):
-        """Small wrapper to unlink only released children."""
-        return self.filtered(lambda c: c.state == "R").unlink()
 
     ##########################################################################
     #                             PUBLIC METHODS                             #
@@ -689,17 +699,6 @@ class CompassionChild(models.Model):
         to_release.write({"sponsor_id": False, "state": state, "hold_id": False})
         # Check if it was a depart and retrieve lifecycle event
         to_release.get_lifecycle_event()
-
-        # the children will be deleted when we reach their expiration date
-        postpone = 60 * 60 * 24 * 7  # One week by default
-        today = datetime.today()
-        for child in to_release.filtered(lambda c: not c.has_been_sponsored):
-            if child.hold_expiration:
-                expire = child.hold_expiration
-                postpone = (expire - today).total_seconds() + 60
-
-            child.with_delay(eta=postpone).unlink_job()
-
         return True
 
     def child_departed(self):

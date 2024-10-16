@@ -7,10 +7,11 @@
 #    The licence is in the file __manifest__.py
 #
 ##############################################################################
+from datetime import datetime
+
 from dateutil.relativedelta import relativedelta
 
 from odoo import models
-from odoo.tools.safe_eval import datetime
 
 
 class PartnerCommunicationJob(models.Model):

@@ -13,7 +13,9 @@ class Text
 
     function __construct($filename, $type)
     {
-        $this->text = utf8_decode(file_get_contents($filename));
+        $this->text = iconv(
+            'UTF-8', 'ISO-8859-15//TRANSLIT', file_get_contents($filename)
+            );
         $this->type = $type;
     }
 

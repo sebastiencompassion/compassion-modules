@@ -1,8 +1,9 @@
-from odoo import api, fields, models
+from odoo import fields, models
 
 
 class ReplyToComments(models.TransientModel):
     _name = "sbc.reply.to.comments.wizard"
+    _description = "Reply to comments wizard"
 
     paragraph_ids = fields.Many2many(
         "correspondence.paragraph", string="Paragraphs", readonly=True

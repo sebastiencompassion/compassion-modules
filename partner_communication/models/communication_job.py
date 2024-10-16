@@ -9,6 +9,7 @@
 ##############################################################################
 import base64
 import logging
+import re
 import threading
 from collections import defaultdict
 from html.parser import HTMLParser
@@ -18,6 +19,8 @@ from jinja2 import TemplateSyntaxError
 
 from odoo import _, api, fields, models, tools
 from odoo.exceptions import MissingError, QWebException, UserError
+
+from odoo.addons.phone_validation.tools import phone_validation
 
 _logger = logging.getLogger(__name__)
 testing = tools.config.get("test_enable")
@@ -29,6 +32,11 @@ except ImportError:
     _logger.warning(
         "Please install PyPDF2 for generating print versions of communications."
     )
+
+try:
+    from bs4 import BeautifulSoup
+except ImportError:
+    _logger.warning("Please install bs4 for using the module")
 
 
 class MLStripper(HTMLParser):
@@ -86,7 +94,7 @@ class CommunicationJob(models.Model):
         readonly=False,
         index=True,
     )
-    model = fields.Char(related="config_id.model", store=True, index=True)
+    model = fields.Char(related="config_id.model_id.model", store=True, index=True)
     partner_id = fields.Many2one(
         "res.partner",
         "Send to",
@@ -150,6 +158,13 @@ class CommunicationJob(models.Model):
         domain=[("report_id", "!=", False)],
         readonly=False,
     )
+    ir_attachment_tmp = fields.Many2many(
+        "ir.attachment",
+        string="Attachments",
+        compute="_compute_void",
+        inverse="_inverse_ir_attachment_tmp",
+        readonly=False,
+    )
     printed_pdf_data = fields.Binary(
         help="Technical field used when the report was not sent to printer "
         "but to client in order to download the result afterwards."
@@ -158,6 +173,8 @@ class CommunicationJob(models.Model):
 
     # printer_output_tray_id = fields.Many2one("printing.tray.output",
     #                                          "Printer Output Bin")
+
+    sms_cost = fields.Float()
 
     def _compute_ir_attachments(self):
         for job in self:
@@ -213,6 +230,26 @@ class CommunicationJob(models.Model):
                 lambda a, job=job: a.attachment_id not in job.ir_attachment_ids
             ).unlink()
 
+    def _compute_void(self):
+        pass
+
+    def _inverse_ir_attachment_tmp(self):
+        for job in self:
+            for attachment in job.ir_attachment_tmp:
+                attachment.write(
+                    {
+                        "res_model": "partner.communication.job",
+                        "res_id": job.id,
+                        "report_id": self.env.ref(
+                            "partner_communication.report_a4_communication"
+                        ).id,
+                    }
+                )
+            job.ir_attachment_ids = [
+                (4, attachment.id) for attachment in job.ir_attachment_tmp
+            ]
+            self._inverse_ir_attachments()
+
     @api.depends("partner_id", "object_ids")
     def _compute_company(self):
         """
@@ -251,6 +288,7 @@ class CommunicationJob(models.Model):
             ("digital", _("By e-mail")),
             ("physical", _("Print report")),
             ("both", _("Both")),
+            ("sms", _("SMS")),
         ]
 
     def _compute_print_pdfname(self):
@@ -436,6 +474,11 @@ class CommunicationJob(models.Model):
             lambda j: j.state == "pending"
             and not (j.need_call == "before_sending" and j.activity_ids)
         )
+
+        # Filter jobs for SMS
+        sms_jobs = self.filtered(lambda j: j.send_mode == "sms")
+        sms_jobs.send_by_sms()
+
         to_print = todo.filtered(lambda j: j.send_mode == "physical")
         for job in todo.filtered(lambda j: j.send_mode in ("both", "digital")):
             origin = self.env.context.get("origin")
@@ -491,14 +534,109 @@ class CommunicationJob(models.Model):
         )
         return True
 
+    def send_by_sms(self):
+        """
+        Sends communication jobs with SMS 939 service.
+        :return: list of sms_texts
+        """
+        link_pattern = re.compile(r'<a href="([^<>]*)">([^<]*)</a>')
+        sms_medium_id = self.env.ref("mass_mailing_sms.utm_medium_sms").id
+        sms_texts = []
+        for job in self.filtered(
+            lambda j: j.state == "pending" and j.partner_id.mobile
+        ):
+            sms_text = job.convert_html_for_sms(link_pattern, sms_medium_id)
+            sms_texts.append(sms_text)
+            sanitize_res = phone_validation.phone_sanitize_numbers_w_record(
+                [job.partner_id.mobile], job.partner_id
+            )
+            sanitized_numbers = [
+                info["sanitized"] for info in sanitize_res.values() if info["sanitized"]
+            ]
+            invalid_numbers = [
+                number for number, info in sanitize_res.items() if info["code"]
+            ]
+            if invalid_numbers:
+                raise UserError(
+                    _("Invalid phone numbers: %s") % ", ".join(invalid_numbers)
+                )
+            self.env["sms.sms"].create(
+                {
+                    "number": sanitized_numbers[0],
+                    "body": sms_text,
+                    "partner_id": job.partner_id.id,
+                }
+            ).send()
+            job.write(
+                {
+                    "state": "done",
+                    "sent_date": fields.Datetime.now(),
+                }
+            )
+            _logger.debug("SMS length: %s", len(sms_text))
+        return sms_texts
+
+    def convert_html_for_sms(self, link_pattern, sms_medium_id):
+        """
+        Converts HTML into simple text for SMS.
+        First replace links with short links using Link Tracker.
+        Then clean HTML using BeautifulSoup library.
+        :param link_pattern: the regex pattern for replacing links
+        :param sms_medium_id: the associated utm.medium id for generated links
+        :return: Clean text with short links for SMS use.
+        """
+        self.ensure_one()
+        source_id = self.config_id.source_id.id
+        paragraph_delimiter = "###P###"
+
+        def _replace_link(match):
+            full_link = match.group(1).replace("&amp;", "&")
+            short_link = self.env["link.tracker"].search(
+                [
+                    ("url", "=", full_link),
+                    ("source_id", "=", source_id),
+                    ("medium_id", "=", sms_medium_id),
+                ]
+            )
+            if not short_link:
+                short_link = self.env["link.tracker"].create(
+                    {
+                        "url": full_link,
+                        "campaign_id": self.utm_campaign_id.id
+                        or self.env.ref(
+                            "partner_communication_compassion."
+                            "utm_campaign_communication"
+                        ).id,
+                        "medium_id": sms_medium_id,
+                        "source_id": source_id,
+                    }
+                )
+            return short_link.short_url
+
+        body = self.body_html.replace("\n", " ").replace(
+            "</p>", "</p>" + paragraph_delimiter
+        )
+        body = link_pattern.sub(_replace_link, body)
+        body = re.sub(r"[ \t\r\f\v]+", " ", body)
+        body = re.sub(r"<br>|<br/>", "\n", body)
+        soup = BeautifulSoup(body, "lxml")
+        text = soup.get_text().replace(paragraph_delimiter, "\n\n")
+        return "\n".join([t.strip() for t in text.split("\n")])
+
     def refresh_text(self):
         self.mapped("attachment_ids").unlink()
         failed = self.set_attachments()
         for job in self - failed:
             lang = self.env.context.get("lang_preview", job.partner_id.lang)
-            if job.email_template_id and job.object_ids:
+            template_id = job.email_template_id
+
+            if not template_id and job.config_id:
+                template_id = job.config_id.email_template_id
+                job.write({"email_template_id": template_id})
+
+            if template_id and job.object_ids:
                 try:
-                    fields = job.email_template_id.with_context(
+                    fields = template_id.with_context(
                         template_preview_lang=lang
                     ).generate_email(job.ids, ["body_html", "subject"])
                     job.write(
@@ -608,7 +746,7 @@ class CommunicationJob(models.Model):
                     )()
                     if binaries and isinstance(binaries, dict):
                         for name, data in list(binaries.items()):
-                            attachment_obj.create(
+                            attachment_id = attachment_obj.create(
                                 {
                                     "name": name,
                                     "communication_id": job.id,
@@ -616,6 +754,7 @@ class CommunicationJob(models.Model):
                                     "data": data[1],
                                 }
                             )
+                            job.attachment_ids += attachment_id
                 except Exception:
                     _logger.error("Error during attachment creation", exc_info=True)
                     job.env.clear()
@@ -627,6 +766,7 @@ class CommunicationJob(models.Model):
                             }
                         )
                     failed += job
+        self._compute_ir_attachments()
         return failed
 
     def preview_pdf(self):
@@ -739,32 +879,40 @@ class CommunicationJob(models.Model):
         for job in self:
             if job.attachment_ids:
                 try:
-                    with self.env.cr.savepoint():
-                        # Print letter
-                        print_name = name[:3] + " " + (job.subject or "")
-                        # output_tray = job.print_letter(print_name)["output_tray"]
-                        job.print_letter(print_name)
+                    # Print letter
+                    print_name = name[:3] + " " + (job.subject or "")
+                    print_options = job.print_letter(print_name)
+                    output_tray = print_options["output_tray"]
 
-                        # Print attachments in the same output_tray
-                        job.attachment_ids.print_attachments(
-                            # output_tray=output_tray,
-                        )
-                        job.write({"state": state, "sent_date": fields.Datetime.now()})
+                    # Print attachments in the same output_tray
+                    job.attachment_ids.print_attachments(
+                        output_tray=output_tray,
+                    )
+                    job.write({"state": state, "sent_date": fields.Datetime.now()})
                 except Exception:
-                    _logger.error("Error printing job %s", [job.id])
+                    _logger.error("Error printing job %s", [job.id], exc_info=True)
             else:
                 batch_print[job.partner_id.lang][job.config_id.name] += job
 
         for configs in batch_print.values():
             for config, jobs in configs.items():
                 try:
-                    with self.env.cr.savepoint():
-                        print_name = name[:3] + " " + config
-                        jobs.print_letter(print_name)
-                        jobs.write({"state": state, "sent_date": fields.Datetime.now()})
+                    print_name = name[:3] + " " + config
+                    jobs.print_letter(print_name)
+                    jobs.write({"state": state, "sent_date": fields.Datetime.now()})
                 except Exception:
-                    _logger.error("Error while printing jobs %s", [str(jobs.ids)])
+                    _logger.error(
+                        "Error while printing jobs %s", str(jobs.ids), exc_info=True
+                    )
         return self.download_data()
+
+    def _notify_get_reply_to(
+        self, default=None, records=None, company=None, doc_names=None
+    ):
+        res = dict.fromkeys(self.ids)
+        for job in self:
+            res[job.id] = job.email_template_id.reply_to
+        return res
 
     def print_letter(self, print_name, **print_options):
         """
@@ -799,30 +947,30 @@ class CommunicationJob(models.Model):
         print_options["doc_format"] = report.report_type
         print_options["action"] = behaviour["action"]
 
-        # TODO Migrate this code when printing.tray functionalities are migrated to 14.0
-        # # The get the print options in the following order of priority:
-        # # - partner.communication.job (only for output bin)
-        # # - partner.communication.config
-        # # - ir.actions.report (behaviour: which can be specific for the user
-        # currently logged in)
-        # def get_first(source):
-        #     return next((v for v in source if v), False)
-        #
-        # print_options["output_tray"] = get_first((
-        #     self[:1].printer_output_tray_id.system_name,
-        #     config_lang.printer_output_tray_id.system_name,
-        #     behaviour["output_tray"]
-        # ))
-        # print_options["input_tray"] = get_first((
-        #     config_lang.printer_input_tray_id.system_name,
-        #     behaviour["input_tray"]
-        # ))
+        # The get the print options in the following order of priority:
+        # - partner.communication.job (only for output bin)
+        # - partner.communication.config
+        # - ir.actions.report
+        # (behaviour: which can be specific for the user currently logged in)
+        def get_first(source):
+            return next((v for v in source if v), False)
+
+        print_options["output_tray"] = get_first(
+            (
+                self[:1].printer_output_tray_id.system_name,
+                config_lang.printer_output_tray_id.system_name,
+                behaviour["output_tray"],
+            )
+        )
+        print_options["input_tray"] = get_first(
+            (config_lang.printer_input_tray_id.system_name, behaviour["input_tray"])
+        )
 
         to_print = report._render_qweb_pdf(self.ids)
         printer = behaviour["printer"].with_context(lang=lang)
         if behaviour["action"] == "server" and printer:
             # Get pdf should directly send it to the printer
-            printer.print_document(report.report_name, to_print[0], **print_options)
+            printer.print_document(report, to_print[0], **print_options)
         else:
             # Store result in one communication
             # (for later download from the result wizard)

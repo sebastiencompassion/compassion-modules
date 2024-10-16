@@ -75,7 +75,7 @@ class SponsorshipGift(models.Model):
     name = fields.Char(compute="_compute_name", translate=False)
     gmc_gift_id = fields.Char(readonly=True, copy=False)
     gift_date = fields.Date(
-        compute="_compute_invoice_fields", inverse=lambda g: True, store=True
+        compute="_compute_invoice_fields", inverse="_inverse_gift_date", store=True
     )
     date_partner_paid = fields.Date(
         compute="_compute_invoice_fields", inverse=lambda g: True, store=True
@@ -201,8 +201,7 @@ class SponsorshipGift(models.Model):
     @api.depends(
         "invoice_line_ids",
         "invoice_line_ids.parent_state",
-        "invoice_line_ids.credit",
-        "invoice_line_ids.debit",
+        "invoice_line_ids.amount_currency",
     )
     def _compute_invoice_fields(self):
         for gift in self.filtered("invoice_line_ids"):
@@ -215,6 +214,18 @@ class SponsorshipGift(models.Model):
                 invoice_lines.mapped("move_id").mapped("invoice_date") or [False]
             )
             gift.amount = sum(invoice_lines.mapped(lambda il: -il.amount_currency))
+
+    def _inverse_gift_date(self):
+        # Postpone message if gift date is in the future
+        for gift in self:
+            if gift.gift_date > fields.Date.today() and gift.message_id.state == "new":
+                gift.message_id.write({"state": "postponed"})
+            elif (
+                gift.gift_date <= fields.Date.today()
+                and gift.message_id.state == "postponed"
+                and gift.state != "verify"
+            ):
+                gift.message_id.write({"state": "new"})
 
     def _compute_currency(self):
         # Set gift currency depending on its invoice currency
@@ -293,6 +304,7 @@ class SponsorshipGift(models.Model):
             vals.pop("message_follower_ids")
             new_gift.write(vals)
         new_gift._create_gift_message()
+        new_gift._inverse_gift_date()
         return new_gift
 
     def _search_for_similar_pending_gifts(self, vals):
@@ -319,10 +331,18 @@ class SponsorshipGift(models.Model):
                 ("attribution", "=", vals["attribution"]),
                 ("gift_date", "like", str(gift_date)[:4]),
                 ("sponsorship_gift_type", "=", vals.get("sponsorship_gift_type")),
-                ("state", "in", ["draft", "verify", "error"]),
+                ("state", "in", ["draft", "verify"]),
             ],
             limit=1,
         )
+
+    def _get_gift_from_reversal_invoice_line(self, invoice_line):
+        if invoice_line.move_id.move_type in ["out_refund"]:
+            return invoice_line.move_id.reversed_entry_id.invoice_line_ids.mapped(
+                "gift_id"
+            )
+        else:
+            return self.env[self._name]
 
     def _blend_in_other_gift(self, other_gift_vals):
         self.ensure_one()
@@ -387,16 +407,35 @@ class SponsorshipGift(models.Model):
         :return: sponsorship.gift record
         """
         gift_vals = self.get_gift_values_from_product(invoice_line)
+        gifts = self.env[self._name]
         if not gift_vals:
-            return False
+            return gifts
 
-        gift = self.create(gift_vals)
-        eligible, message = gift.is_eligible()
-        if not eligible:
-            gift.state = "verify"
-            gift.message_post(body=message)
-            gift.message_id.state = "postponed"
-        return gift
+        if invoice_line.debit == 0 and invoice_line.credit > 0:
+            gift = self.create(gift_vals)
+            eligible, message = gift.is_eligible()
+            if not eligible:
+                gift.state = "verify"
+                gift.message_post(body=message)
+                gift.message_id.state = "postponed"
+            return gift
+        else:
+            for reversal_gift in self._get_gift_from_reversal_invoice_line(
+                invoice_line
+            ):
+                blend_gift = reversal_gift._blend_in_other_gift(gift_vals)
+                if reversal_gift.state in ["In Progress", "Delivered"]:
+                    gifts += blend_gift
+                elif reversal_gift.state in ["draft", "verify"]:
+                    if blend_gift.amount == 0:
+                        blend_gift.unlink()
+                    else:
+                        gifts += blend_gift
+            if invoice_line.move_id.move_type not in ["out_refund"]:
+                return self._search_for_similar_pending_gifts(
+                    gift_vals
+                )._blend_in_other_gift(gift_vals)
+        return gifts
 
     @api.model
     def get_gift_values_from_product(self, invoice_line):
@@ -829,7 +868,7 @@ class SponsorshipGift(models.Model):
             inverse_move.action_post()
             gift.inverse_payment_id = inverse_move
 
-        notify_ids = self.env["res.config.settings"].get_param("gift_notify_ids")
+        notify_ids = self.env["res.config.settings"].get_param("gift_notify_ids")[0][2]
         if notify_ids:
             for gift in self:
                 partner = gift.partner_id

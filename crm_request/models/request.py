@@ -59,12 +59,13 @@ class CrmClaim(models.Model):
             )
             message = request.incoming_message_id = messages[:1]
             request.incoming_message = message.body
+            from_email = message.email_from or message.author_id.email or ""
             request.quoted_reply = f"""
                 <blockquote style="padding-right:0px;padding-left:5px;
                     border-left-color: #000; margin-left:5px;
                     margin-right:0px;border-left-width: 2px; border-left-style:solid"
                 >
-                    From: {message.email_from.replace('<', '(').replace('>', ')')}<br/>
+                    From: {from_email.replace('<', '(').replace('>', ')')}<br/>
                     Date: {message.date}<br/>
                     Subject: {message.subject}<br/>
                     {message.body}
@@ -96,6 +97,7 @@ class CrmClaim(models.Model):
             "default_template_id": template_id,
             "default_composition_mode": "comment",
             "default_partner_ids": [(4, self.partner_id.id)],
+            "default_subject": self.name,
             "use_email_alias": self.reply_to or self.email_from,
             "mark_so_as_sent": True,
             "salutation_language": self.language,
@@ -113,6 +115,16 @@ class CrmClaim(models.Model):
             "target": "new",
             "context": ctx,
         }
+
+    def _notify_get_reply_to(
+        self, default=None, records=None, company=None, doc_names=None
+    ):
+        res = dict.fromkeys(self.ids)
+        for claim in self:
+            res[claim.id] = (
+                claim.categ_id.template_id.reply_to or claim.alias_id.display_name
+            )
+        return res
 
     @api.model
     def _read_group_stage_ids(self, stages, domain, order):
@@ -148,15 +160,16 @@ class CrmClaim(models.Model):
             "date": msg.get("date"),  # Get the time of the sending of the mail
             "alias_id": alias.id,
             "categ_id": category_id,
-            "subject": subject,
-            "email_from": msg.get("from"),
+            "name": subject,
+            # Our contact forms use the reply-to field for the sponsor's email
+            "email_from": msg.get("reply_to") or msg.get("from", ""),
         }
 
         if "partner_id" not in custom_values:
             match_obj = self.env["res.partner.match"]
-            partner = match_obj.match_values_to_partner(
+            partner = match_obj._match_email(
                 {"email": email_normalize(defaults["email_from"])}
-            )
+            )[:1]
             if partner:
                 defaults["partner_id"] = partner.id
                 defaults["language"] = partner.lang
@@ -204,6 +217,7 @@ class CrmClaim(models.Model):
         in_leave.write({"stage_id": stage_new, "user_id": False})
         return result
 
+    @api.returns("mail.message", lambda value: value.id)
     def message_post(self, **kwargs):
         """Change the stage to "Resolve" when the employee answer
         to the supporter but not if it's an automatic answer.
@@ -306,10 +320,9 @@ class CrmClaim(models.Model):
         for req in request_to_notify:
             req.activity_schedule(
                 "mail.mail_activity_data_todo",
-                summary=_("A support request require your attention"),
+                summary=_("A support request requires your attention"),
                 note=_(
-                    f"The request {req.code} you were assigned to requires"
-                    " your attention."
-                ),
+                    "The request {} you were assigned to requires your attention."
+                ).format(req.code),
                 user_id=req.user_id.id,
             )

@@ -139,6 +139,12 @@
               context="{'default_res_model': 'partner.communication.job', 'default_res_id': active_id}"
               mode="kanban"
             />
+                        <field
+              name="ir_attachment_tmp"
+              widget="many2many_binary"
+              string=' '
+              class="oe_edit_only"
+            />
                     </group>
                 </sheet>
                 <div class="oe_chatter">
@@ -218,7 +224,11 @@
           name="call"
           domain="[('need_call', '!=', False), ('activity_ids', '!=', False)]"
         />
-                <separator />
+                <filter
+          string="Last 7 days sent communications"
+          name="last7days"
+          domain="[('sent_date','&lt;=',datetime.datetime.now()),('sent_date','&gt;=',datetime.datetime.now()-relativedelta(week=1))]"
+        />                <separator />
                 <filter
           string="Letters"
           name="digital"

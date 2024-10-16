@@ -10,9 +10,7 @@
 
 import datetime
 
-from odoo import api, fields, models
-
-from odoo.addons.crm.models.crm_lead import CRM_LEAD_FIELDS_TO_MERGE
+from odoo import SUPERUSER_ID, api, fields, models
 
 
 class CrmLead(models.Model):
@@ -52,6 +50,24 @@ class CrmLead(models.Model):
             },
         }
 
+    def write(self, vals):
+        updated_stage_id = vals.get("stage_id")
+
+        if updated_stage_id:
+            stage = self.env["crm.stage"].browse(updated_stage_id)
+            is_lost = not self.active and self.probability == 0
+            if not is_lost and stage.is_lost:
+                vals.update({"active": False, "probability": 0})
+            elif is_lost and not stage.is_lost:
+                vals.update({"active": True, "lost_reason": False})
+                lead_probabilities = self._pls_get_naive_bayes_probabilities()
+                if self.id in lead_probabilities:
+                    vals.update({"automated_probability": lead_probabilities[self.id]})
+                    if self.is_automated_probability:
+                        vals.update({"probability": lead_probabilities[self.id]})
+
+        return super().write(vals)
+
     @api.depends("event_ids", "event_ids.planned_sponsorships")
     def _compute_planned_sponsorship(self):
         for lead in self:
@@ -78,6 +94,35 @@ class CrmLead(models.Model):
 
         return data
 
-    def merge_opportunity(self, user_id=False, team_id=False):
-        CRM_LEAD_FIELDS_TO_MERGE.extend(["phonecall_ids", "meeting_ids"])
-        return super().merge_opportunity(user_id, team_id)
+    @api.depends("partner_id")
+    def _compute_name(self):
+        for lead in self:
+            if not lead.name and lead.partner_id and lead.partner_id.name:
+                lead.name = lead.partner_id.name
+
+    @api.model
+    def _read_group_stage_ids(self, stages, domain, order):
+        res = super()._read_group_stage_ids(stages, domain, order)
+
+        # if the domain contains team_id filters, add them to the search domain
+        team_id_domain = [
+            cond
+            for cond in domain
+            if hasattr(cond, "__getitem__") and cond[0] == "team_id"
+        ]
+
+        if len(team_id_domain) > 0:
+            search_domain = [
+                *(["|"] * (len(team_id_domain) - 1) + team_id_domain),
+            ]
+            res += stages.browse(
+                stages._search(
+                    search_domain, order=order, access_rights_uid=SUPERUSER_ID
+                )
+            )
+
+            # Order is lost by the merge and empty stages are pushed back, so we need
+            # to sort them.
+            res = res.sorted()
+
+        return res

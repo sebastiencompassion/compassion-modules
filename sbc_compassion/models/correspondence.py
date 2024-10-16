@@ -71,7 +71,7 @@ class Correspondence(models.Model):
         tracking=True,
         readonly=False,
     )
-    name = fields.Char(compute="_compute_name")
+    name = fields.Char(compute="_compute_name", store=True)
     partner_id = fields.Many2one(
         "res.partner", "Partner", readonly=True, ondelete="restrict"
     )
@@ -222,11 +222,6 @@ class Correspondence(models.Model):
     final_letter_url = fields.Char()
     import_id = fields.Many2one("import.letters.history", readonly=False)
     translator = fields.Char()
-    translator_id = fields.Many2one(  # TODO remove me after migration
-        "res.partner",
-        "Local translator",
-        readonly=True,
-    )
     email = fields.Char(related="partner_id.email")
     sponsorship_state = fields.Selection(
         related="sponsorship_id.state", string="Sponsorship state", readonly=True
@@ -234,11 +229,14 @@ class Correspondence(models.Model):
     is_final_letter = fields.Boolean(compute="_compute_is_final_letter")
     generator_id = fields.Many2one("correspondence.s2b.generator", readonly=False)
     resubmit_id = fields.Integer(default=1)
+    has_valid_language = fields.Boolean(compute="_compute_valid_language", store=True)
 
     # Letter remote access
     ######################
-    uuid = fields.Char(required=True, default=lambda self: self._get_uuid())
-    read_url = fields.Char()
+    uuid = fields.Char(
+        required=True, default=lambda self: self._get_uuid(), copy=False, index=True
+    )
+    read_url = fields.Char(compute="_compute_read_url", store=True)
 
     # 5. SQL Constraints
     ####################
@@ -247,7 +245,12 @@ class Correspondence(models.Model):
             "kit_identifier",
             "unique(kit_identifier)",
             _("The kit id already exists in database."),
-        )
+        ),
+        (
+            "uuid",
+            "unique(uuid)",
+            _("The uuid already exists in database."),
+        ),
     ]
     # Lock
     #######
@@ -304,6 +307,7 @@ class Correspondence(models.Model):
             ("Supporter Letter", _("Supporter Letter")),
         ]
 
+    @api.depends("sponsorship_id", "communication_type_ids")
     def _compute_name(self):
         for letter in self:
             if letter.sponsorship_id and letter.communication_type_ids:
@@ -416,6 +420,37 @@ class Correspondence(models.Model):
                 letter.child_id.project_id.field_office_id.spoken_language_ids
                 + letter.child_id.project_id.field_office_id.translated_language_ids
             )
+
+    @api.depends(
+        "supporter_languages_ids",
+        "page_ids",
+        "page_ids.translated_text",
+        "translation_language_id",
+    )
+    def _compute_valid_language(self):
+        """Detect if text is written in the language corresponding to the
+        language_id"""
+        for letter in self:
+            letter.has_valid_language = False
+            if letter.translated_text and letter.translation_language_id:
+                s = (
+                    letter.translated_text.strip(" \t\n\r.")
+                    .replace(BOX_SEPARATOR, "")
+                    .replace(PAGE_SEPARATOR, "")
+                )
+                if s:
+                    # find the language of text argument
+                    lang = self.env["langdetect"].detect_language(
+                        letter.translated_text
+                    )
+                    letter.has_valid_language = (
+                        lang and lang in letter.supporter_languages_ids
+                    )
+
+    @api.depends("uuid")
+    def _compute_read_url(self):
+        for letter in self:
+            letter.read_url = f"{letter.get_base_url()}/b2s_image?id={letter.uuid}"
 
     ##########################################################################
     #                              ORM METHODS                               #
@@ -656,6 +691,8 @@ class Correspondence(models.Model):
                 # Avoid to publish twice a same letter
                 is_published = is_published and letter.state != published_state
                 if is_published or letter.state != published_state:
+                    if letter._will_erase_text(vals):
+                        vals.pop("page_ids", False)
                     letter.write(vals)
             else:
                 if "id" in vals:
@@ -701,12 +738,12 @@ class Correspondence(models.Model):
 
     def process_letter(self):
         """Method called when new B2S letter is Published."""
-        base_url = (
-            self.env["ir.config_parameter"].sudo().get_param("web.external.url", "")
-        )
-        self.download_attach_letter_image(letter_type="final_letter_url")
-        for letter in self:
-            letter.read_url = f"{base_url}/b2s_image?id={letter.uuid}"
+        # If the letter's source language is known by the sponsor,
+        # send the original letter without any translation
+        letter_type = "final_letter_url"
+        if self.original_language_id in self.supporter_languages_ids:
+            letter_type = "original_letter_url"
+        self.download_attach_letter_image(letter_type=letter_type)
         return True
 
     def download_attach_letter_image(self, letter_type="final_letter_url"):
@@ -912,21 +949,54 @@ class Correspondence(models.Model):
         )
 
     def create_text_boxes(self):
-        self.mapped("page_ids.paragraph_ids").unlink()
         paragraphs = self.env["correspondence.paragraph"].with_context(
             from_correspondence_text=True
         )
-        for page in self.mapped("page_ids"):
+
+        for page in self.page_ids:
+            # Check if there is any non-empty text
             if page.original_text or page.english_text or page.translated_text:
+                # Split the text boxes
                 original_boxes = (page.original_text or "").split(BOX_SEPARATOR)
                 english_boxes = (page.english_text or "").split(BOX_SEPARATOR)
                 translated_boxes = (page.translated_text or "").split(BOX_SEPARATOR)
                 nb_paragraphs = max(
                     len(original_boxes), len(english_boxes), len(translated_boxes)
                 )
-                for i in range(0, nb_paragraphs):
-                    paragraphs += paragraphs.create(
-                        [
+
+                # Initialize a flag to check if there are changes
+                data_changed = False
+
+                # Compare existing paragraphs with new data
+                for i in range(nb_paragraphs):
+                    original_text = original_boxes[i] if len(original_boxes) > i else ""
+                    english_text = english_boxes[i] if len(english_boxes) > i else ""
+                    translated_text = (
+                        translated_boxes[i] if len(translated_boxes) > i else ""
+                    )
+
+                    # Compare new data with existing data
+                    if i < len(page.paragraph_ids):
+                        para = page.paragraph_ids[i]
+                        if (
+                            para.original_text != original_text
+                            or para.english_text != english_text
+                            or para.translated_text != translated_text
+                        ):
+                            data_changed = True
+                            break
+                    else:
+                        if original_text or english_text or translated_text:
+                            data_changed = True
+                            break
+
+                if data_changed:
+                    # Unlink existing paragraphs if new data is different
+                    page.paragraph_ids.unlink()
+
+                    # Create new paragraphs
+                    for i in range(nb_paragraphs):
+                        paragraphs.create(
                             {
                                 "page_id": page.id,
                                 "original_text": original_boxes[i]
@@ -940,9 +1010,13 @@ class Correspondence(models.Model):
                                 else "",
                                 "sequence": i,
                             }
-                        ]
-                    )
+                        )
+
         return paragraphs
+
+    def get_base_url(self):
+        # Use external URL for letter access
+        return self.env["ir.config_parameter"].sudo().get_param("web.external.url", "")
 
     ##########################################################################
     #                            PRIVATE METHODS                             #
@@ -956,3 +1030,48 @@ class Correspondence(models.Model):
             user_id=user_id,
             note=f"Letter has {state}",
         )
+
+    def _will_erase_text(self, letter_vals):
+        """T1602 Checks if the text will be erased when saving the letter.
+        GMC sends back empty text content but we don't want to erase the text on
+        our side.
+
+        Args:
+            letter_vals: A dictionary containing correspondence values like
+            {'page_ids': [(0, 0, {'english_text': 'example'}]}.
+
+        Returns:
+            True if the text will be erased, False otherwise.
+        """
+        self.ensure_one()
+        if any((self.english_text, self.original_text, self.translated_text)):
+            return not self._has_text(letter_vals)
+        return False
+
+    @api.model
+    def _has_text(self, letter_vals):
+        """Checks if any text key has a non-empty value in the provided data.
+
+        Args:
+            letter_vals: A dictionary containing correspondence values like
+            {'page_ids': [(0, 0, {'english_text': 'example'}]}.
+
+        Returns:
+            True if any of the text keys has a non-empty value, False otherwise.
+        """
+        # Check for text in top level keys
+        if not isinstance(letter_vals, dict):
+            return False
+        if (
+            letter_vals.get("original_text")
+            or letter_vals.get("english_text")
+            or letter_vals.get("translated_text")
+        ):
+            return True
+
+        # Check for text in nested dictionaries
+        for item in letter_vals.get("page_ids", []):
+            if isinstance(item, tuple) and len(item) == 3 and self._has_text(item[2]):
+                return True
+
+        return False

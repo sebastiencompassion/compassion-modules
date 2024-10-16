@@ -9,7 +9,6 @@
 ##############################################################################
 import base64
 import logging
-from collections import defaultdict
 from io import BytesIO
 
 from wand.exceptions import PolicyError
@@ -49,7 +48,11 @@ class CorrespondenceS2bGenerator(models.Model):
     template_id = fields.Many2one(required=True, domain=[("type", "=", "s2b")])
     background = fields.Image(related="template_id.template_image")
     selection_domain = fields.Char(
-        default=[("state", "=", "active"), ("child_id", "!=", False)]
+        default=[
+            ("partner_id.category_id", "=", "Correspondance by Compassion"),
+            ("state", "=", "active"),
+            ("child_id", "!=", False),
+        ]
     )
     sponsorship_ids = fields.Many2many(
         "recurring.contract", string="Sponsorships", required=True, readonly=False
@@ -176,54 +179,61 @@ class CorrespondenceS2bGenerator(models.Model):
         """Generate a picture for preview."""
         return self.write({"state": "draft"})
 
-    def generate_letters(self, utms=None):
+    def generate_letters(self):
         """
         Launch S2B Creation job
         :return: True
         """
-        self.with_delay().generate_letters_job(utms)
+        self.with_delay().generate_letters_job()
         return True
 
-    def generate_letters_job(self, utms=None):
+    def generate_letters_job(self):
         """
         Create S2B Letters
         :return: True
         """
-        if utms is None:
-            utms = dict()
-        utms = defaultdict(lambda: None, utms)
-        letters = self.env["correspondence"]
-        for sponsorship in self.sponsorship_ids:
-            text = self._get_text(sponsorship)
-            vals = {
-                "sponsorship_id": sponsorship.id,
-                "store_letter_image": False,
-                "template_id": self.template_id.id,
-                "direction": "Supporter To Beneficiary",
-                "source": self.source,
-                "original_language_id": self.language_id.id,
-                "original_text": text,
-                "campaign_id": utms["campaign"],
-                "medium_id": utms["medium"],
-                "source_id": utms["source"],
-            }
-            if self.image_ids:
-                vals["original_attachment_ids"] = [
-                    (
-                        0,
-                        0,
-                        {
-                            "datas": atchmt.datas,
-                            "name": atchmt.name,
-                            "res_model": letters._name,
-                        },
-                    )
-                    for atchmt in self.image_ids
-                ]
-            letters += letters.create(vals)
+        try:
+            letters = self.env["correspondence"]
+            for sponsorship in self.sponsorship_ids:
+                text = self._get_text(sponsorship)
+                vals = {
+                    "sponsorship_id": sponsorship.id,
+                    "store_letter_image": False,
+                    "template_id": self.template_id.id,
+                    "direction": "Supporter To Beneficiary",
+                    "source": self.source,
+                    "original_language_id": self.language_id.id,
+                    "original_text": text,
+                }
+                if self.image_ids:
+                    vals["original_attachment_ids"] = [
+                        (
+                            0,
+                            0,
+                            {
+                                "datas": atchmt.datas,
+                                "name": atchmt.name,
+                                "res_model": letters._name,
+                            },
+                        )
+                        for atchmt in self.image_ids
+                    ]
+                letters += letters.create(vals)
 
-        self.letter_ids = letters
-        return self.write({"state": "done", "date": fields.Datetime.now()})
+            letters.create_text_boxes()
+            self.letter_ids = letters
+
+            # If the operation succeeds, notify the user
+            message = "Letters have been successfully generated."
+            self.env.user.notify_success(message=message)
+            return self.write({"state": "done", "date": fields.Datetime.now()})
+
+        except Exception as error:
+            # If the operation fails, notify the user with the error message
+            error_message = str(error)
+            self.env.user.notify_danger(message=error_message)
+
+        return True
 
     def open_letters(self):
         letters = self.letter_ids

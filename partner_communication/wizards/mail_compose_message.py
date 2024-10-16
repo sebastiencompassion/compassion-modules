@@ -72,8 +72,19 @@ class EmailComposeMessage(models.TransientModel):
                 }
             )
         )
+
         # Fetch template values.
-        wizard.write(
-            wizard.onchange_template_id(template.id, "mass_mail", False, False)["value"]
-        )
-        return wizard.get_mail_values(res_ids)
+        write_data = wizard.onchange_template_id(
+            template.id, "mass_mail", False, False
+        )["value"]
+
+        # Body would be sanitized if we write it now, breaking any embedded code and
+        # causing an error.
+        # Only usage is create_emails above and it overrides it just after.
+        # We write it just after getting the mail values.
+        mail_body = write_data.pop("body")
+        wizard.write(write_data)
+        values = wizard.get_mail_values(res_ids)
+        wizard.write({"body": mail_body})
+
+        return values

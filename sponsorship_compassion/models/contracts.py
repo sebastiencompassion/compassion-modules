@@ -19,6 +19,7 @@ from odoo import _, api, fields, models, tools
 from odoo.exceptions import UserError, ValidationError
 
 from odoo.addons.child_compassion.models.compassion_hold import HoldType
+from odoo.addons.message_center_compassion.tools.onramp_connector import OnrampConnector
 
 from .product_names import (
     BIRTHDAY_GIFT,
@@ -109,12 +110,12 @@ class SponsorshipContract(models.Model):
     project_id = fields.Many2one(
         "compassion.project", "Project", related="child_id.project_id", readonly=False
     )
-    child_name = fields.Char(
-        "Sponsored child name", related="child_id.name", readonly=True
-    )
+    child_name = fields.Char("Child name", related="child_id.name", readonly=True)
     child_code = fields.Char(
-        "Sponsored child code", related="child_id.local_id", readonly=True, store=True
+        "Child code", related="child_id.local_id", readonly=True, store=True
     )
+    child_age = fields.Integer("Age", related="child_id.age", readonly=True)
+    child_gender = fields.Selection("Gender", related="child_id.gender", readonly=True)
     is_active = fields.Boolean(
         "Contract Active",
         compute="_compute_active",
@@ -171,6 +172,7 @@ class SponsorshipContract(models.Model):
         ],
         required=True,
         default="O",
+        string="Sponsorship type",
     )
     group_freq = fields.Char(
         string="Payment frequency", compute="_compute_frequency", readonly=True
@@ -478,14 +480,19 @@ class SponsorshipContract(models.Model):
         # Fund-suspended projects are also excluded
         # Correspondence and gift contracts are also excluded
         valid_contracts = self.filtered(
-            lambda s: s.type in ("S", "O") and not s.child_id.project_id.hold_cdsp_funds
+            lambda s: s.type not in ("SC", "SWP", "G")
+            and not s.child_id.project_id.hold_cdsp_funds
         )
         invoices = super(SponsorshipContract, valid_contracts)._filter_due_invoices()
         return invoices.filtered(lambda i: i.invoice_category != "gift")
 
     def _compute_is_direct_debit(self):
         dd_modes = self.env["account.payment.mode"].search(
-            [("payment_method_code", "like", "%direct_debit")]
+            [
+                "|",
+                ("payment_method_code", "like", "%direct_debit"),
+                ("payment_method_code", "like", "%dd"),
+            ]
         )
         for contract in self:
             contract.is_direct_debit = contract.payment_mode_id in dd_modes
@@ -524,6 +531,8 @@ class SponsorshipContract(models.Model):
         correspondent_id = vals.get("correspondent_id")
         if correspondent_id and correspondent_id != partner_id:
             partner_ids.append(correspondent_id)
+        if not correspondent_id:
+            vals["correspondent_id"] = partner_id
         if partner_ids:
             other_nums = self.search(
                 [
@@ -813,8 +822,7 @@ class SponsorshipContract(models.Model):
             # Define the payer that will be sync to gmc
             contract.gmc_payer_partner_id = contract.partner_id
             # UpsertConstituent Message
-            partner = contract.correspondent_id
-            partner.upsert_constituent()
+            partners.upsert_constituent()
             contract.upsert_sponsorship()
         return True
 
@@ -834,7 +842,7 @@ class SponsorshipContract(models.Model):
 
     def contract_waiting(self):
         contracts = self.filtered(lambda c: c.type == "O")
-        super().contract_waiting()
+        super(SponsorshipContract, self).contract_waiting()
         for contract in self - contracts:
             if not contract.start_date:
                 contract.start_date = fields.Datetime.now()
@@ -899,7 +907,11 @@ class SponsorshipContract(models.Model):
     ##########################################################################
     def _on_language_changed(self):
         """Update the preferred language in GMC."""
-        messages = self.upsert_sponsorship().with_context({"async_mode": False})
+        messages = (
+            self.filtered("gmc_commitment_id")
+            .with_context({"async_mode": False})
+            .upsert_sponsorship()
+        )
         error_msg = (
             "Error when updating sponsorship language. "
             "You may be out of sync with GMC - please try again."
@@ -1087,11 +1099,17 @@ class SponsorshipContract(models.Model):
             # checks if there is already a gift for this year which has been cancelled
             gift_this_year = self.env["account.move.line"].search(
                 [
-                    ("partner_id", "=", contract.partner_id.id),
                     ("product_id", "=", product_id),
                     ("date", ">=", start_of_year),
                     ("date", "<=", end_of_year),
                     ("contract_id", "=", contract.id),
+                    "|",
+                    "&",
+                    ("partner_id", "=", contract.correspondent_id.id),
+                    ("contract_id.send_gifts_to", "=", "correspondent_id"),
+                    "&",
+                    ("partner_id", "=", contract.partner_id.id),
+                    ("contract_id.send_gifts_to", "=", "partner_id"),
                 ]
             )
             if gift_this_year:
@@ -1178,7 +1196,9 @@ class SponsorshipContract(models.Model):
 
                 # Check contract is active or terminated recently.
                 if contract.state == "cancelled" and not bypass_state:
-                    raise UserError(f"The contract {contract.name} is not active.")
+                    raise UserError(
+                        f"The contract {contract.display_name} is not active."
+                    )
                 if (
                     contract.state == "terminated"
                     and contract.end_date
@@ -1187,7 +1207,9 @@ class SponsorshipContract(models.Model):
                     limit = invoice.invoice_date - relativedelta(days=180)
                     ended_since = contract.end_date
                     if ended_since.date() < limit:
-                        raise UserError(f"The contract {contract.name} is not active.")
+                        raise UserError(
+                            f"The contract {contract.display_name} is not active."
+                        )
 
                 # Activate gift related contracts (if any)
                 if "S" in contract.type:
@@ -1288,3 +1310,43 @@ class SponsorshipContract(models.Model):
             data_invs = gifts._build_invoices_data(contracts=contracts)
             if data_invs:
                 gifts.update_open_invoices(data_invs)
+
+    def migrate_gmc_correspondence_commitment(self):
+        """Migrate the GMC commitment to the new field."""
+        self.ensure_one()
+        onramp = OnrampConnector(self.env)
+        global_id = self.child_id.global_id
+        logger.info(
+            f"Migrating {global_id} child on {self.gmc_commitment_id} contract."
+        )
+        answer = onramp.send_message(f"beneficiaries/{global_id}/summary", "GET")
+        commitments = (
+            answer.get("content").get("Commitments")
+            if answer.get("code") == 200
+            else False
+        )
+        if commitments:
+            for commitment in commitments:
+                if commitment.get("EndDate"):
+                    logger.info(f"Commitment skipped it has an enddate {commitment}")
+                    continue
+                if commitment.get("CommitmentType") == "Sponsor":
+                    new_gmc_id = commitment.get("CommitmentID")
+                    if new_gmc_id and new_gmc_id != self.gmc_commitment_id:
+                        err_message = (
+                            f"Sponsorship {self.display_name} has a different "
+                            f"commitment_id from the one received by GMC "
+                            f"({self.gmc_commitment_id} vs {new_gmc_id})"
+                        )
+                        self.message_post(body=err_message)
+                        logger.error(err_message)
+                    partner = self.env["res.partner"].search_read(
+                        [("global_id", "=", commitment.get("SupporterID"))], ["id"]
+                    )
+                    self.gmc_payer_partner_id = (
+                        partner[0].get("id") if partner else False
+                    )
+                elif commitment.get("CommitmentType") == "Correspondent":
+                    self.gmc_correspondent_commitment_id = commitment.get(
+                        "CommitmentID"
+                    )

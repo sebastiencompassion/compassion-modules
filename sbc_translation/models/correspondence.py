@@ -158,6 +158,15 @@ class Correspondence(models.Model):
             ("other", _("Other issue")),
         ]
 
+    @api.onchange("new_translator_id")
+    def onchange_new_translator_id(self):
+        """
+        When a translator is set, the letter should always be on "in progress" status to ensure that the letter can
+        be found under the translator's saved letters in the Translation Platform.
+        """
+        if self.new_translator_id:
+            self.translation_status = "in progress"
+
     ##########################################################################
     #                              ORM METHODS                               #
     ##########################################################################
@@ -224,7 +233,8 @@ class Correspondence(models.Model):
 
         # Dynamically get the list of priority keys from the selection field definition
         priorities = [
-            int(priority[0]) for priority in self._fields["translation_priority"].selection
+            int(priority[0])
+            for priority in self._fields["translation_priority"].selection
         ]
 
         # Handle the case where scanned_date is not set
@@ -233,10 +243,15 @@ class Correspondence(models.Model):
         )
 
         # Calculate the difference in weeks between the current date and the scanned date.
-        calculated_priority = min((fields.Date.today() - letter_date).days // 7, len(priorities) - 1)
+        calculated_priority = min(
+            (fields.Date.today() - letter_date).days // 7, len(priorities) - 1
+        )
 
         # If the user had manually set a higher priority, we stick to it
-        if self.translation_priority and int(self.translation_priority) >= calculated_priority:
+        if (
+            self.translation_priority
+            and int(self.translation_priority) >= calculated_priority
+        ):
             return self.translation_priority
 
         return str(calculated_priority)
@@ -299,12 +314,18 @@ class Correspondence(models.Model):
         TP API for translator to raise an issue with the letter
         """
         self.ensure_one()
+
         self.write(
             {"translation_issue": issue_type, "translation_issue_comments": body_html}
         )
         self.assign_supervisor()
-        # template = self.env.ref("sbc_translation.translation_issue_notification").sudo()
-        # self.sudo().message_post_with_template(template.id, author_id=self.env.user.partner_id.id)
+
+        html = self.env["ir.qweb"]._render(
+            "sbc_translation.translation_issue_log", {"record": self}
+        )
+
+        self._message_log(body=html)
+
         return True
 
     def reply_to_comments(self, body_html):
@@ -321,6 +342,23 @@ class Correspondence(models.Model):
             },
         )
         return self.write({"unread_comments": False})
+
+    def reply_to_issue(self, body_html):
+        """
+        TP API for sending to the translator a message regarding his issue.
+        """
+        self.ensure_one()
+        reply_template = self.env.ref("sbc_translation.issue_reply").sudo()
+        self.message_post_with_view(
+            reply_template,
+            partner_ids=[(4, self.new_translator_id.partner_id.id)],
+            values={
+                "reply": body_html,
+            },
+        )
+        return self.write(
+            {"translation_issue": False, "translation_issue_comments": False}
+        )
 
     def mark_comments_read(self):
         return self.write({"unread_comments": False})
@@ -350,14 +388,20 @@ class Correspondence(models.Model):
         page_index = 0
         paragraph_index = 0
         current_page = self.page_ids[page_index]
+        comments_updates = []
         if not translator_id:
-            translator_id = (
-                self.env["translation.user"].search([("user_id", "=", self.env.uid)]).id
-            )
+            # Don't overwrite current translator if any.
+            if self.new_translator_id:
+                translator_id = self.new_translator_id
+            else:
+                translator_id = (
+                    self.env["translation.user"].search([("user_id", "=", self.env.uid)]).id
+                )
         letter_vals = {
             "new_translator_id": translator_id,
             "translation_status": "in progress",
         }
+
         for element in letter_elements:
             if element.get("type") == "pageBreak":
                 page_index += 1
@@ -373,10 +417,33 @@ class Correspondence(models.Model):
                 if self.translation_language_id.code_iso == "eng":
                     # Copy translation text into english text field
                     paragraph_vals["english_text"] = element.get("content")
+
+                if (
+                    current_page.paragraph_ids[paragraph_index].comments
+                    != paragraph_vals["comments"]
+                ):
+                    comments_updates.append(
+                        {
+                            "page_index": page_index + 1,
+                            "paragraph_index": paragraph_index + 1,
+                            "old": current_page.paragraph_ids[paragraph_index].comments,
+                            "new": paragraph_vals["comments"],
+                        }
+                    )
+
                 current_page.paragraph_ids[paragraph_index].write(paragraph_vals)
                 paragraph_index += 1
             if element.get("comments"):
                 letter_vals["unread_comments"] = True
+
+        if len(comments_updates) > 0:
+            html = self.env["ir.qweb"]._render(
+                "sbc_translation.translation_comments_update",
+                {"comments": comments_updates},
+            )
+
+            self._message_log(body=html)
+
         self.write(letter_vals)
         return True
 
@@ -448,8 +515,8 @@ class Correspondence(models.Model):
             # Send to GMC
             self.sudo().create_commkit()
         else:
-            # Recompose the letter image and process letter
-            self.sudo().with_context(force_publish=True).process_letter()
+            # Recompose the letter image
+            self.compose_letter_button()
 
     def list_letters(self):
         """API call to fetch letters to translate"""
@@ -500,14 +567,7 @@ class Correspondence(models.Model):
 
     def get_translated_elements(self):
         res = []
-        for page in self.page_ids:
-            if res:
-                res.append(
-                    {
-                        "type": "pageBreak",
-                        "id": page.id,
-                    }
-                )
+        for i, page in enumerate(self.page_ids):
             for paragraph in page.paragraph_ids:
                 res.append(
                     {
@@ -518,6 +578,13 @@ class Correspondence(models.Model):
                         "source": paragraph.english_text
                         or paragraph.original_text
                         or "",
+                    }
+                )
+            if i < len(self.page_ids) - 1:
+                res.append(
+                    {
+                        "type": "pageBreak",
+                        "id": page.id,
                     }
                 )
         return res
@@ -535,7 +602,6 @@ class Correspondence(models.Model):
 
         # Update priority for each letters
         for letter in letters_to_translate:
-
             current_priority = letter.translation_priority
             new_priority = letter.calculate_translation_priority()
 
